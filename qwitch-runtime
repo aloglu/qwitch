@@ -1,0 +1,828 @@
+#!/usr/bin/env bash
+
+set -u
+
+umask 077
+
+runtime_root=${XDG_RUNTIME_DIR:?Qwitch requires XDG_RUNTIME_DIR}
+state_dir="$runtime_root/qwitch"
+lock_file="$runtime_root/qwitch-runtime.lock"
+lease_file="$state_dir/lease.json"
+resident_path="$state_dir/qwitch-runtime-v1"
+hyprctl_bin=${QWITCH_HYPRCTL:-/usr/bin/hyprctl}
+jq_bin=${QWITCH_JQ:-/usr/bin/jq}
+proc_input=${QWITCH_PROC_INPUT:-/proc/bus/input/devices}
+runtime_uid=$(/usr/bin/id -u)
+hypr_timeout_seconds=${QWITCH_HYPR_TIMEOUT_SECONDS:-5}
+lock_timeout_seconds=${QWITCH_LOCK_TIMEOUT_SECONDS:-15}
+
+if [[ ! $hypr_timeout_seconds =~ ^[1-9][0-9]*$ ]] || ((hypr_timeout_seconds > 30)); then
+  printf 'qwitch-runtime: invalid Hyprland command timeout\n' >&2
+  exit 78
+fi
+if [[ ! $lock_timeout_seconds =~ ^[1-9][0-9]*$ ]] || ((lock_timeout_seconds > 60)); then
+  printf 'qwitch-runtime: invalid runtime lock timeout\n' >&2
+  exit 78
+fi
+
+if [[ -L $state_dir ]]; then
+  printf 'qwitch-runtime: refusing symlinked runtime directory\n' >&2
+  exit 78
+fi
+/usr/bin/install -d -m 700 "$state_dir" || exit 1
+state_meta=$(/usr/bin/stat -c '%u:%a' "$state_dir") || exit 1
+if [[ $state_meta != "$runtime_uid:700" || -L $state_dir ]]; then
+  printf 'qwitch-runtime: unsafe runtime directory ownership or mode\n' >&2
+  exit 78
+fi
+
+fail() {
+  printf 'qwitch-runtime: %s\n' "$*" >&2
+  return 1
+}
+
+lock_runtime() {
+  exec 9>"$lock_file"
+  /usr/bin/flock -w "$lock_timeout_seconds" 9
+}
+
+unlock_runtime() {
+  /usr/bin/flock -u 9 2>/dev/null || true
+  exec 9>&-
+}
+
+process_start() {
+  local pid=${1:-} stat rest
+  [[ $pid =~ ^[0-9]+$ && -r /proc/$pid/stat ]] || return 1
+  stat=$(<"/proc/$pid/stat") || return 1
+  rest=${stat##*) }
+  set -- $rest
+  [[ $# -ge 20 ]] || return 1
+  printf '%s\n' "${20}"
+}
+
+process_matches() {
+  local pid=${1:-} expected=${2:-} actual
+  [[ $pid =~ ^[0-9]+$ && $expected =~ ^[0-9]+$ ]] || return 1
+  actual=$(process_start "$pid") || return 1
+  [[ $actual == "$expected" ]]
+}
+
+validate_state() {
+  local payload=${1:-} stored=${2:-false}
+  [[ ${#payload} -le 65536 ]] || return 1
+  "$jq_bin" -e --argjson stored "$stored" '
+    def text($n): type == "string" and length <= $n;
+    def spec: text(512) and test("^[A-Za-z0-9_+,.()\\-]*$");
+    def index: type == "number" and . == floor and . >= 0 and . <= 63;
+    type == "object"
+    and .schema == 1
+    and (.leaseId | text(128) and test("^[A-Za-z0-9._-]+$"))
+    and (.token | text(160) and test("^qwitch-[A-Za-z0-9._-]+$"))
+    and (.generation | type == "number" and . == floor and . >= 1 and . <= 9007199254740991)
+    and (.hyprInstance | text(512))
+    and (.status == "active" or .status == "retiring")
+    and (.phase | text(64) and test("^[A-Za-z0-9._-]+$"))
+    and (.heartbeat | type == "number" and . == floor and . >= 0 and . <= 9007199254740991)
+    and (if $stored then
+      (.shellPid | type == "number" and . == floor and . >= 1 and . <= 2147483647)
+      and (.shellStart | text(32) and test("^[1-9][0-9]*$"))
+    else
+      (has("shellPid") | not) and (has("shellStart") | not)
+    end)
+    and (.bindingOwned | type == "boolean")
+    and (.devices | type == "array" and length <= 32)
+    and all(.devices[];
+      type == "object"
+      and (.fingerprint | text(1024))
+      and (.name | text(256) and test("^[A-Za-z0-9_.:+-]+$"))
+      and (.identity | type == "object"
+        and (.inputName | text(256))
+        and (.bus | text(16)) and (.vendor | text(16)) and (.product | text(16))
+        and (.uniq | text(512)) and (.phys | text(1024)))
+      and (.baseline | type == "object"
+        and (.layout | spec) and (.variant | spec) and (.index | index))
+      and (.ownedLayouts | type == "array" and length >= 1 and length <= 16
+        and all(.[]; type == "object" and (.layout | spec) and (.variant | spec)))
+      and (.ownedIndexes | type == "array" and length <= 16 and all(.[]; index))
+    )
+  ' >/dev/null 2>&1 <<<"$payload"
+}
+
+valid_request_state() {
+  validate_state "${1:-}" false
+}
+
+valid_stored_state() {
+  validate_state "${1:-}" true
+}
+
+read_valid_lease() {
+  [[ -f $lease_file ]] || return 2
+  [[ ! -L $lease_file ]] || return 1
+  local metadata
+  metadata=$(/usr/bin/stat -c '%u:%a' "$lease_file") || return 1
+  [[ $metadata == "$runtime_uid:600" ]] || return 1
+  local payload
+  payload=$(<"$lease_file") || return 1
+  valid_stored_state "$payload" || return 1
+  printf '%s\n' "$payload"
+}
+
+atomic_write_lease() {
+  local payload=${1:-} tmp
+  [[ ! -e $lease_file || ( -f $lease_file && ! -L $lease_file ) ]] || {
+    fail "refusing unsafe lease path"
+    return 78
+  }
+  valid_stored_state "$payload" || {
+    fail "refusing to write an invalid lease"
+    return 78
+  }
+  tmp="$state_dir/.lease.$$.${RANDOM:-0}"
+  printf '%s\n' "$payload" >"$tmp" || return 1
+  chmod 600 "$tmp" || return 1
+  mv -f "$tmp" "$lease_file"
+}
+
+clear_exact_lease() {
+  local lease_id=${1:-} token=${2:-} generation=${3:-} current
+  current=$(read_valid_lease) || return 0
+  if "$jq_bin" -e --arg lease "$lease_id" --arg token "$token" --argjson generation "$generation" \
+      '.leaseId == $lease and .token == $token and .generation == $generation' \
+      >/dev/null <<<"$current"; then
+    rm -f "$lease_file"
+  fi
+}
+
+lua_quote() {
+  "$jq_bin" -Rrn --arg value "${1:-}" '$value | @json'
+}
+
+run_eval() {
+  local output
+  if output=$(run_hyprctl eval "$1" 2>&1); then
+    return 0
+  fi
+  if [[ $output == *QWITCH_STALE* ]]; then
+    return 75
+  fi
+  printf '%s\n' "$output" >&2
+  return 1
+}
+
+run_hyprctl() {
+  /usr/bin/timeout --signal=TERM --kill-after=1s "${hypr_timeout_seconds}s" \
+    "$hyprctl_bin" "$@"
+}
+
+run_mode() {
+  local mode=${1:-} lua_code=${2:-} batch=${3:-} post_lua_code=${4:-}
+  case "$mode" in
+    eval)
+      run_eval "$lua_code"
+      ;;
+    eval-then-batch)
+      run_eval "$lua_code" || return $?
+      [[ -z $batch ]] || run_hyprctl --batch "$batch"
+      ;;
+    eval-batch-eval)
+      run_eval "$lua_code" || return $?
+      if [[ -n $batch ]]; then run_hyprctl --batch "$batch" || return $?; fi
+      [[ -z $post_lua_code ]] || run_eval "$post_lua_code"
+      ;;
+    *)
+      fail "unknown mutation mode '$mode'"
+      return 2
+      ;;
+  esac
+}
+
+guardian_ack_file() {
+  printf '%s/watchdog.%s.ack\n' "$state_dir" "$1"
+}
+
+guardian_lock_file() {
+  printf '%s/watchdog.%s.lock\n' "$state_dir" "$1"
+}
+
+test_mode_enabled() {
+  [[ ${QWITCH_TEST_MODE:-0} == 1 \
+    && -n ${QWITCH_HYPRCTL:-} \
+    && $hyprctl_bin != /usr/bin/hyprctl \
+    && $runtime_root == /tmp/qwitch-runtime-test.* ]]
+}
+
+guardian_ready() {
+  local lease_id=${1:-} expected_nonce=${2:-} ack metadata pid start nonce
+  ack=$(guardian_ack_file "$lease_id")
+  [[ -f $ack && ! -L $ack ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%a' "$ack") || return 1
+  [[ $metadata == "$runtime_uid:600" ]] || return 1
+  read -r pid start nonce <"$ack" || return 1
+  [[ $nonce =~ ^arm-[A-Za-z0-9._-]+$ ]] || return 1
+  [[ -z $expected_nonce || $nonce == "$expected_nonce" ]] || return 1
+  process_matches "$pid" "$start"
+}
+
+write_guardian_ack() {
+  local lease_id=${1:-} nonce=${2:-} start=${3:-} ack tmp
+  ack=$(guardian_ack_file "$lease_id")
+  tmp="$state_dir/.watchdog-ack.$$.${RANDOM:-0}"
+  printf '%s %s %s\n' "$$" "$start" "$nonce" >"$tmp" || return 1
+  chmod 600 "$tmp" || return 1
+  mv -f "$tmp" "$ack"
+}
+
+withdraw_guardian_ack_locked() {
+  local lease_id=${1:-} nonce=${2:-} ack pid start saved_nonce
+  ack=$(guardian_ack_file "$lease_id")
+  [[ -f $ack && ! -L $ack ]] || return 0
+  read -r pid start saved_nonce <"$ack" || return 0
+  if [[ $pid == "$$" && $saved_nonce == "$nonce" ]]; then
+    rm -f "$ack"
+  fi
+}
+
+release_guardian_locked() {
+  withdraw_guardian_ack_locked "${1:-}" "${2:-}"
+  /usr/bin/flock -u 8 2>/dev/null || true
+  exec 8>&-
+}
+
+start_guardian() {
+  local lease_id=${1:-} attempt nonce ack
+  if test_mode_enabled && [[ ${QWITCH_TEST_DISABLE_GUARDIAN:-0} == 1 ]]; then return 0; fi
+  guardian_ready "$lease_id" && return 0
+  ack=$(guardian_ack_file "$lease_id")
+  rm -f "$ack"
+  nonce="arm-$$-${RANDOM:-0}-${RANDOM:-0}"
+  /usr/bin/setsid -f "$resident_path" guardian "$lease_id" "$nonce" \
+    </dev/null >/dev/null 2>&1 9>&-
+  for ((attempt = 0; attempt < 40; attempt++)); do
+    guardian_ready "$lease_id" "$nonce" && return 0
+    /usr/bin/sleep 0.05
+  done
+  fail "guardian did not acknowledge lease $lease_id"
+  return 1
+}
+
+normalize_owner() {
+  local payload=${1:-} existing=${2:-} pid start signature heartbeat
+  pid=$PPID
+  start=$(process_start "$pid") || {
+    fail "could not establish the service process identity"
+    return 1
+  }
+  signature=${HYPRLAND_INSTANCE_SIGNATURE:-}
+  if [[ -n $existing ]]; then
+    pid=$("$jq_bin" -r '.shellPid // 0' <<<"$existing")
+    start=$("$jq_bin" -r '.shellStart // "0"' <<<"$existing")
+    heartbeat=$("$jq_bin" -r '.heartbeat' <<<"$existing")
+  else
+    heartbeat=$("$jq_bin" -r '.heartbeat' <<<"$payload")
+  fi
+  "$jq_bin" -c --argjson pid "$pid" --arg start "$start" --arg signature "$signature" \
+      --argjson heartbeat "$heartbeat" '
+    .shellPid = $pid
+    | .shellStart = $start
+    | .heartbeat = $heartbeat
+    | if .hyprInstance == "" then .hyprInstance = $signature else . end
+  ' <<<"$payload"
+}
+
+mutation_payloads_match() {
+  local lease_id=${1:-} token=${2:-} generation=${3:-} pre=${4:-} post=${5:-}
+  local signature=${HYPRLAND_INSTANCE_SIGNATURE:-}
+  "$jq_bin" -en --arg lease "$lease_id" --arg token "$token" \
+      --argjson generation "$generation" --arg signature "$signature" \
+      --argjson pre "$pre" --argjson post "$post" '
+    def exact($value):
+      $value.leaseId == $lease
+      and $value.token == $token
+      and $value.generation == $generation
+      and $value.status == "active";
+    exact($pre) and exact($post)
+    and $pre.hyprInstance == $post.hyprInstance
+    and ($signature == "" or $pre.hyprInstance == $signature)
+  ' >/dev/null
+}
+
+state_has_obligations() {
+  "$jq_bin" -e '.bindingOwned or (.devices | length > 0)' >/dev/null <<<"$1"
+}
+
+install_resident() {
+  local source_path=$0 tmp
+  lock_runtime || return $?
+  if [[ -L $resident_path ]]; then
+    unlock_runtime
+    fail "refusing symlinked resident helper"
+    return 78
+  fi
+  if [[ $source_path != "$resident_path" ]] && ! cmp -s "$source_path" "$resident_path" 2>/dev/null; then
+    tmp="$state_dir/.runtime.$$.${RANDOM:-0}"
+    /usr/bin/install -m 700 "$source_path" "$tmp" || {
+      unlock_runtime
+      return 1
+    }
+    mv -f "$tmp" "$resident_path" || {
+      unlock_runtime
+      return 1
+    }
+  fi
+  chmod 700 "$resident_path" 2>/dev/null || true
+  unlock_runtime
+  printf '%s\n' "$resident_path"
+}
+
+proc_identity_matches() {
+  local device_name=${1:-} record=${2:-}
+  local input_name bus vendor product uniq phys
+  [[ -r $proc_input ]] || return 1
+  input_name=$("$jq_bin" -r '.identity.inputName' <<<"$record")
+  bus=$("$jq_bin" -r '.identity.bus | ascii_downcase' <<<"$record")
+  vendor=$("$jq_bin" -r '.identity.vendor | ascii_downcase' <<<"$record")
+  product=$("$jq_bin" -r '.identity.product | ascii_downcase' <<<"$record")
+  uniq=$("$jq_bin" -r '.identity.uniq' <<<"$record")
+  phys=$("$jq_bin" -r '.identity.phys' <<<"$record")
+  /usr/bin/awk -v RS='' -v wanted="$device_name" -v expected_name="$input_name" \
+      -v expected_bus="$bus" -v expected_vendor="$vendor" -v expected_product="$product" \
+      -v expected_uniq="$uniq" -v expected_phys="$phys" '
+    function norm(value, out) {
+      out = tolower(value)
+      gsub(/[^a-z0-9]+/, "-", out)
+      gsub(/^-+|-+$/, "", out)
+      return out
+    }
+    BEGIN { wanted = norm(wanted); matches = 0; exact = 0 }
+    {
+      name = bus = vendor = product = uniq = phys = ""
+      count = split($0, lines, "\n")
+      for (i = 1; i <= count; i++) {
+        if (match(lines[i], /^I: Bus=([0-9A-Fa-f]+) Vendor=([0-9A-Fa-f]+) Product=([0-9A-Fa-f]+)/, ids)) {
+          bus = tolower(ids[1]); vendor = tolower(ids[2]); product = tolower(ids[3])
+        } else if (match(lines[i], /^N: Name="(.*)"$/, field)) name = field[1]
+        else if (match(lines[i], /^P: Phys=(.*)$/, field)) phys = field[1]
+        else if (match(lines[i], /^U: Uniq=(.*)$/, field)) uniq = field[1]
+      }
+      if (norm(name) == wanted) {
+        matches++
+        identity_ok = (name == expected_name && bus == expected_bus \
+          && vendor == expected_vendor && product == expected_product)
+        if (expected_uniq != "") identity_ok = identity_ok && uniq == expected_uniq
+        else identity_ok = identity_ok && expected_phys != "" && phys == expected_phys
+        if (identity_ok) exact++
+      }
+    }
+    END { exit !(matches == 1 && exact == 1) }
+  ' "$proc_input"
+}
+
+drain_prior() {
+  local lease_id=${1:-} token=${2:-} generation=${3:-} current rc old_generation next
+  local old_signature current_signature
+  [[ $generation =~ ^[0-9]+$ ]] || return 2
+  lock_runtime || return $?
+  current=$(read_valid_lease)
+  rc=$?
+  if ((rc == 2)); then
+    unlock_runtime
+    printf 'ready\n'
+    return 0
+  elif ((rc != 0)); then
+    unlock_runtime
+    fail "existing lease is corrupt; runtime mutation remains blocked"
+    return 78
+  fi
+  old_signature=$("$jq_bin" -r '.hyprInstance' <<<"$current")
+  current_signature=${HYPRLAND_INSTANCE_SIGNATURE:-}
+  if [[ -n $old_signature && -n $current_signature && $old_signature != "$current_signature" ]]; then
+    rm -f "$lease_file"
+    unlock_runtime
+    printf 'ready\n'
+    return 0
+  fi
+  if "$jq_bin" -e --arg lease "$lease_id" --arg token "$token" --argjson generation "$generation" \
+      '.leaseId == $lease and .token == $token and .generation == $generation' \
+      >/dev/null <<<"$current"; then
+    unlock_runtime
+    printf 'ready\n'
+    return 0
+  fi
+  old_generation=$("$jq_bin" -r '.generation' <<<"$current")
+  if ((generation <= old_generation)); then
+    next=$((old_generation + 1))
+    unlock_runtime
+    printf 'generation:%s\n' "$next"
+    return 76
+  fi
+  current=$("$jq_bin" -c '.status = "retiring" | .phase = "successor-drain"' <<<"$current")
+  atomic_write_lease "$current" || {
+    rc=$?
+    unlock_runtime
+    return "$rc"
+  }
+  local old_id
+  old_id=$("$jq_bin" -r '.leaseId' <<<"$current")
+  start_guardian "$old_id" || {
+    unlock_runtime
+    return 1
+  }
+  unlock_runtime
+  printf 'draining\n'
+  return 76
+}
+
+mutate_with_lease() {
+  local lease_id=${1:-} token=${2:-} generation=${3:-} pre=${4:-} post=${5:-}
+  local mode=${6:-} lua_code=${7:-} batch=${8:-} post_lua=${9:-}
+  local current="" rc new_lease=0
+  [[ $generation =~ ^[0-9]+$ ]] || return 2
+  valid_request_state "$pre" && valid_request_state "$post" || {
+    fail "mutation lease payload is invalid"
+    return 78
+  }
+  mutation_payloads_match "$lease_id" "$token" "$generation" "$pre" "$post" || {
+    fail "mutation lease identity does not match its command"
+    return 78
+  }
+  lock_runtime || return $?
+  current=$(read_valid_lease)
+  rc=$?
+  if ((rc == 2)); then
+    new_lease=1
+    current=""
+  elif ((rc != 0)); then
+    unlock_runtime
+    fail "existing lease is corrupt; refusing mutation"
+    return 78
+  elif "$jq_bin" -e --arg lease "$lease_id" --arg token "$token" --argjson generation "$generation" \
+      '.leaseId == $lease and .token == $token and .generation == $generation' \
+      >/dev/null <<<"$current"; then
+    if ! "$jq_bin" -e --arg instance "$("$jq_bin" -r '.hyprInstance' <<<"$pre")" \
+        '.status == "active" and .hyprInstance == $instance' >/dev/null <<<"$current"; then
+      unlock_runtime
+      return 75
+    fi
+  else
+    unlock_runtime
+    return 76
+  fi
+  pre=$(normalize_owner "$pre" "$current") || {
+    unlock_runtime
+    return 78
+  }
+  post=$(normalize_owner "$post" "$current") || {
+    unlock_runtime
+    return 78
+  }
+  atomic_write_lease "$pre" || {
+    rc=$?
+    unlock_runtime
+    return "$rc"
+  }
+  if ! start_guardian "$lease_id"; then
+    ((new_lease)) && clear_exact_lease "$lease_id" "$token" "$generation"
+    unlock_runtime
+    return 1
+  fi
+  run_mode "$mode" "$lua_code" "$batch" "$post_lua"
+  rc=$?
+  if ((rc == 0)); then
+    if state_has_obligations "$post"; then
+      atomic_write_lease "$post" || rc=$?
+    else
+      clear_exact_lease "$lease_id" "$token" "$generation"
+    fi
+  elif ((rc == 75)); then
+    clear_exact_lease "$lease_id" "$token" "$generation"
+  fi
+  unlock_runtime
+  return "$rc"
+}
+
+retire_lease() {
+  local lease_id=${1:-} token=${2:-} generation=${3:-} current rc
+  [[ $generation =~ ^[0-9]+$ ]] || return 2
+  lock_runtime || return $?
+  current=$(read_valid_lease)
+  rc=$?
+  if ((rc == 2)); then
+    unlock_runtime
+    return 0
+  elif ((rc != 0)); then
+    unlock_runtime
+    fail "lease is corrupt; refusing untargeted retirement"
+    return 78
+  fi
+  if ! "$jq_bin" -e --arg lease "$lease_id" --arg token "$token" --argjson generation "$generation" \
+      '.leaseId == $lease and .token == $token and .generation == $generation' \
+      >/dev/null <<<"$current"; then
+    unlock_runtime
+    return 75
+  fi
+  current=$("$jq_bin" -c '.status = "retiring" | .phase = "service-retire"' <<<"$current")
+  atomic_write_lease "$current" || {
+    rc=$?
+    unlock_runtime
+    return "$rc"
+  }
+  start_guardian "$lease_id" || {
+    unlock_runtime
+    return 1
+  }
+  unlock_runtime
+}
+
+heartbeat_lease() {
+  local lease_id=${1:-} token=${2:-} generation=${3:-} current rc
+  [[ $generation =~ ^[0-9]+$ ]] || return 2
+  lock_runtime || return $?
+  current=$(read_valid_lease)
+  rc=$?
+  if ((rc == 2)); then
+    unlock_runtime
+    return 0
+  elif ((rc != 0)); then
+    unlock_runtime
+    return 78
+  fi
+  if ! "$jq_bin" -e --arg lease "$lease_id" --arg token "$token" --argjson generation "$generation" \
+      '.leaseId == $lease and .token == $token and .generation == $generation and .status == "active"' \
+      >/dev/null <<<"$current"; then
+    unlock_runtime
+    return 75
+  fi
+  current=$("$jq_bin" -c '.heartbeat += 1' <<<"$current")
+  atomic_write_lease "$current"
+  rc=$?
+  unlock_runtime
+  return "$rc"
+}
+
+abandon_lease() {
+  local lease_id=${1:-} token=${2:-} generation=${3:-} signature=${4:-} current rc
+  [[ $generation =~ ^[0-9]+$ && ${#signature} -le 512 ]] || return 2
+  lock_runtime || return $?
+  current=$(read_valid_lease)
+  rc=$?
+  if ((rc == 2)); then
+    unlock_runtime
+    return 0
+  elif ((rc != 0)); then
+    unlock_runtime
+    fail "lease is corrupt; refusing untargeted abandonment"
+    return 78
+  fi
+  if ! "$jq_bin" -e --arg lease "$lease_id" --arg token "$token" \
+      --argjson generation "$generation" --arg signature "$signature" '
+        .leaseId == $lease and .token == $token and .generation == $generation
+        and .hyprInstance == $signature
+      ' >/dev/null <<<"$current"; then
+    unlock_runtime
+    return 75
+  fi
+  rm -f "$lease_file"
+  unlock_runtime
+}
+
+cleanup_locked() {
+  local expected_id=${1:-} lease rc signature current_signature devices_json
+  lease=$(read_valid_lease)
+  rc=$?
+  ((rc == 0)) || return "$rc"
+  [[ $("$jq_bin" -r '.leaseId' <<<"$lease") == "$expected_id" ]] || return 75
+  signature=$("$jq_bin" -r '.hyprInstance' <<<"$lease")
+  current_signature=${HYPRLAND_INSTANCE_SIGNATURE:-}
+  if [[ -n $signature && -n $current_signature && $signature != "$current_signature" ]]; then
+    rm -f "$lease_file"
+    return 0
+  fi
+  if ! devices_json=$(run_hyprctl -j devices 2>/dev/null) \
+      || ! "$jq_bin" -e '.keyboards | type == "array"' >/dev/null 2>&1 <<<"$devices_json"; then
+    return 1
+  fi
+
+  local token generation token_q binding_owned device_count record name count current
+  local baseline_layout baseline_variant baseline_index current_layout current_variant current_index
+  local owned_layout owned_index layout_q variant_q name_q statements="" batch="" keep='[]'
+  token=$("$jq_bin" -r '.token' <<<"$lease")
+  generation=$("$jq_bin" -r '.generation' <<<"$lease")
+  token_q=$(lua_quote "$token")
+  binding_owned=$("$jq_bin" -r '.bindingOwned' <<<"$lease")
+  device_count=$("$jq_bin" -r '.devices | length' <<<"$lease")
+
+  while IFS= read -r record; do
+    [[ -n $record ]] || continue
+    name=$("$jq_bin" -r '.name' <<<"$record")
+    count=$("$jq_bin" -r --arg name "$name" '[.keyboards[] | select(.name == $name)] | length' <<<"$devices_json")
+    if ((count > 1)); then
+      keep=$("$jq_bin" -c --argjson record "$record" '. + [$record]' <<<"$keep")
+      continue
+    fi
+    baseline_layout=$("$jq_bin" -r '.baseline.layout' <<<"$record")
+    baseline_variant=$("$jq_bin" -r '.baseline.variant' <<<"$record")
+    baseline_index=$("$jq_bin" -r '.baseline.index' <<<"$record")
+    owned_layout=false
+    owned_index=false
+    if ((count == 1)); then
+      if ! proc_identity_matches "$name" "$record"; then
+        # A present device that merely reuses the Hyprland name is not the
+        # device whose baseline Qwitch owns. Keep the obligation without
+        # touching the replacement.
+        keep=$("$jq_bin" -c --argjson record "$record" '. + [$record]' <<<"$keep")
+        continue
+      fi
+      current=$("$jq_bin" -c --arg name "$name" '[.keyboards[] | select(.name == $name)][0]' <<<"$devices_json")
+      current_layout=$("$jq_bin" -r '.layout // ""' <<<"$current")
+      current_variant=$("$jq_bin" -r '.variant // ""' <<<"$current")
+      current_index=$("$jq_bin" -r '.active_layout_index // -1' <<<"$current")
+      "$jq_bin" -e --arg layout "$current_layout" --arg variant "$current_variant" \
+        'any(.ownedLayouts[]; .layout == $layout and .variant == $variant)' \
+        >/dev/null <<<"$record" && owned_layout=true
+      "$jq_bin" -e --argjson index "$current_index" 'any(.ownedIndexes[]; . == $index)' \
+        >/dev/null <<<"$record" && owned_index=true
+      if [[ $current_layout == "$baseline_layout" && $current_variant == "$baseline_variant" ]]; then
+        if [[ $owned_index == true && $current_index != "$baseline_index" ]]; then
+          batch+="${batch:+ ; }switchxkblayout $name $baseline_index"
+        fi
+        continue
+      fi
+      [[ $owned_layout == true ]] || continue
+    fi
+    name_q=$(lua_quote "$name")
+    layout_q=$(lua_quote "$baseline_layout")
+    variant_q=$(lua_quote "$baseline_variant")
+    statements+="${statements:+; }hl.device({ name = $name_q, kb_layout = $layout_q, kb_variant = $variant_q })"
+    if ((count == 1)) && [[ $owned_index == true ]]; then
+      batch+="${batch:+ ; }switchxkblayout $name $baseline_index"
+    fi
+  done < <("$jq_bin" -c '.devices[]' <<<"$lease")
+
+  local keep_count code post_code
+  keep_count=$("$jq_bin" -r 'length' <<<"$keep")
+  code="do local generation = $generation; local current = tonumber(rawget(_G, '__qwitch_generation') or 0); "
+  code+="if current > generation then error('QWITCH_STALE') end; "
+  code+="local cancelled = tonumber(rawget(_G, '__qwitch_cancelled_generation') or 0); if generation > cancelled then _G.__qwitch_cancelled_generation = generation end; "
+  if [[ $binding_owned == true ]]; then
+    code+="local binding = rawget(_G, '__qwitch_owned_binding'); if type(binding) == 'table' and binding.token == $token_q then local handle = binding.handle; if handle then local ok, result = pcall(function() return handle:unbind() end); if not ok or result == false then error('QWITCH_UNBIND_FAILED') end end; if rawget(_G, '__qwitch_owned_binding') == binding then _G.__qwitch_owned_binding = nil end end; "
+  fi
+  if ((device_count > 0)); then
+    code+="local owner = rawget(_G, '__qwitch_layout_owner'); if not owner or owner.token ~= $token_q then error('QWITCH_STALE') end; owner.phase = 'watchdog-restoring'; $statements; "
+  fi
+  code+="end"
+  post_code="do local owner = rawget(_G, '__qwitch_layout_owner'); if owner and owner.token == $token_q then "
+  if ((keep_count > 0)); then
+    post_code+="owner.phase = 'active'"
+  else
+    post_code+="_G.__qwitch_layout_owner = nil"
+  fi
+  post_code+=" end end"
+
+  run_mode eval-batch-eval "$code" "$batch" "$post_code"
+  rc=$?
+  if ((rc == 75)); then
+    rm -f "$lease_file"
+    return 0
+  elif ((rc != 0)); then
+    return "$rc"
+  fi
+  if ((keep_count > 0)); then
+    lease=$("$jq_bin" -c --argjson keep "$keep" \
+      '.devices = $keep | .bindingOwned = false | .status = "retiring" | .phase = "collision-wait"' \
+      <<<"$lease")
+    atomic_write_lease "$lease"
+    return 10
+  fi
+  rm -f "$lease_file"
+  return 0
+}
+
+guardian_loop() {
+  local expected_id=${1:-} nonce=${2:-} guard start lease status pid shell_start rc wait_seconds heartbeat
+  local poll_seconds=5 collision_seconds=30 metadata
+  local last_heartbeat="" missed_heartbeats=0
+  [[ $expected_id =~ ^[A-Za-z0-9._-]+$ && $nonce =~ ^arm-[A-Za-z0-9._-]+$ ]] || return 2
+  if test_mode_enabled; then
+    if [[ ${QWITCH_TEST_GUARDIAN_POLL_SECONDS:-} =~ ^(0\.[0-9]+|[1-9][0-9]*(\.[0-9]+)?)$ ]]; then
+      poll_seconds=${QWITCH_TEST_GUARDIAN_POLL_SECONDS}
+    fi
+    if [[ ${QWITCH_TEST_GUARDIAN_COLLISION_SECONDS:-} =~ ^(0\.[0-9]+|[1-9][0-9]*(\.[0-9]+)?)$ ]]; then
+      collision_seconds=${QWITCH_TEST_GUARDIAN_COLLISION_SECONDS}
+    fi
+  fi
+  guard=$(guardian_lock_file "$expected_id")
+  [[ ! -L $guard && ( ! -e $guard || -f $guard ) ]] || return 78
+  exec 8>"$guard"
+  metadata=$(/usr/bin/stat -c '%u:%a' "$guard") || return 78
+  [[ $metadata == "$runtime_uid:600" ]] || return 78
+  /usr/bin/flock -n 8 || return 0
+  start=$(process_start $$) || return 1
+  write_guardian_ack "$expected_id" "$nonce" "$start" || return 1
+  while true; do
+    if ! lock_runtime; then
+      /usr/bin/sleep "$poll_seconds"
+      continue
+    fi
+    lease=$(read_valid_lease)
+    rc=$?
+    if ((rc == 2)); then
+      release_guardian_locked "$expected_id" "$nonce"
+      unlock_runtime
+      return 0
+    elif ((rc != 0)); then
+      release_guardian_locked "$expected_id" "$nonce"
+      unlock_runtime
+      return 78
+    fi
+    [[ $("$jq_bin" -r '.leaseId' <<<"$lease") == "$expected_id" ]] || {
+      release_guardian_locked "$expected_id" "$nonce"
+      unlock_runtime
+      return 0
+    }
+    status=$("$jq_bin" -r '.status' <<<"$lease")
+    pid=$("$jq_bin" -r '.shellPid // 0' <<<"$lease")
+    shell_start=$("$jq_bin" -r '.shellStart // "0"' <<<"$lease")
+    heartbeat=$("$jq_bin" -r '.heartbeat' <<<"$lease")
+    if [[ $status == active ]] && process_matches "$pid" "$shell_start"; then
+      if [[ -z $last_heartbeat || $heartbeat != "$last_heartbeat" ]]; then
+        last_heartbeat=$heartbeat
+        missed_heartbeats=0
+      else
+        missed_heartbeats=$((missed_heartbeats + 1))
+      fi
+      if ((missed_heartbeats < 3)); then
+        unlock_runtime
+        /usr/bin/sleep "$poll_seconds"
+        continue
+      fi
+      lease=$("$jq_bin" -c '.status = "retiring" | .phase = "heartbeat-expired"' <<<"$lease")
+      atomic_write_lease "$lease" || {
+        unlock_runtime
+        /usr/bin/sleep "$poll_seconds"
+        continue
+      }
+    elif [[ $status == active ]]; then
+      lease=$("$jq_bin" -c '.status = "retiring" | .phase = "service-process-exited"' <<<"$lease")
+      atomic_write_lease "$lease" || {
+        unlock_runtime
+        /usr/bin/sleep "$poll_seconds"
+        continue
+      }
+    fi
+    cleanup_locked "$expected_id"
+    rc=$?
+    if ((rc == 0 || rc == 2 || rc == 75)); then
+      release_guardian_locked "$expected_id" "$nonce"
+      unlock_runtime
+      return 0
+    fi
+    unlock_runtime
+    wait_seconds=2
+    ((rc == 10)) && wait_seconds=$collision_seconds
+    /usr/bin/sleep "$wait_seconds"
+  done
+}
+
+cleanup_now() {
+  local expected_id=${1:-} lease rc
+  lock_runtime || return $?
+  lease=$(read_valid_lease)
+  rc=$?
+  if ((rc != 0)); then
+    unlock_runtime
+    return "$rc"
+  fi
+  [[ $("$jq_bin" -r '.leaseId' <<<"$lease") == "$expected_id" ]] || {
+    unlock_runtime
+    return 75
+  }
+  lease=$("$jq_bin" -c '.status = "retiring" | .phase = "cleanup-now"' <<<"$lease")
+  atomic_write_lease "$lease" || {
+    rc=$?
+    unlock_runtime
+    return "$rc"
+  }
+  cleanup_locked "$expected_id"
+  rc=$?
+  unlock_runtime
+  return "$rc"
+}
+
+command=${1:-}
+shift || true
+case "$command" in
+  bootstrap) install_resident ;;
+  drain) drain_prior "$@" ;;
+  mutate) mutate_with_lease "$@" ;;
+  retire) retire_lease "$@" ;;
+  heartbeat) heartbeat_lease "$@" ;;
+  abandon) abandon_lease "$@" ;;
+  guardian) guardian_loop "$@" ;;
+  cleanup-now) cleanup_now "$@" ;;
+  *)
+    fail "unknown mode '$command'"
+    exit 2
+    ;;
+esac

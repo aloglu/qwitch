@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.aloglu.qwitch",
+  "name": "Qwitch",
+  "version": "1.0.0",
+  "author": "Abdullah Aloğlu",
+  "license": "MIT",
+  "description": "A minimal, device-aware keyboard layout switcher for the Omarchy bar.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Qwitch",
+    "description": "Switch keyboard layouts and configure Qwitch from the bar.",
+    "category": "Input",
+    "allowMultiple": false,
+    "defaults": {
+      "layouts": [],
+      "displayMode": "both",
+      "osdEnabled": false,
+      "shortcut": null,
+      "deviceOverrides": {}
+    }
+  }
+}

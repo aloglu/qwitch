@@ -1,0 +1,93 @@
+const assert = require("node:assert/strict")
+const fs = require("node:fs")
+const path = require("node:path")
+const test = require("node:test")
+
+const servicePath = path.join(__dirname, "..", "Service.qml")
+const service = fs.readFileSync(servicePath, "utf8")
+const panel = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+
+test("runtime mutations use the resident pre/post lease contract", () => {
+  assert.match(service, /_residentRuntimeHelper/)
+  assert.match(service, /function leasedCommand\(/)
+  assert.match(service, /"mutate"/)
+  assert.match(service, /JSON\.stringify\(preState\)/)
+  assert.match(service, /JSON\.stringify\(postState\)/)
+  assert.doesNotMatch(service, /\[_runtimeHelper,\s*"eval/)
+})
+
+test("mutation ownership failures always quiesce the old service", () => {
+  assert.match(service, /function mutationSuperseded\(exitCode\)/)
+  assert.match(service, /exitCode === 75 \|\| exitCode === 76/)
+  assert.equal((service.match(/root\.mutationSuperseded\(exitCode\)/g) || []).length, 5)
+})
+
+test("layout mutations stay within the cleanup lease index schema", () => {
+  assert.match(service, /readonly property int _maximumRuntimeLayouts: 16/)
+  assert.match(service, /readonly property int maximumLayouts: _maximumRuntimeLayouts/)
+  assert.match(service, /configuredLayouts\.length > _maximumRuntimeLayouts/)
+  assert.match(service, /function safeRuntimeIndex\(value\)/)
+  assert.match(service, /if \(!safeRuntimeIndex\(index\)\) continue/)
+})
+
+test("restore pre-state covers indexes produced before its batch completes", () => {
+  assert.match(service, /var restoreLeaseIndexes = \(\{\}\)/)
+  assert.match(service, /restoreLeaseIndexes\[fingerprint\] = \[\s*0,\s*baseline \? baseline\.index[\s\S]*current \? current\.active_layout_index/)
+  assert.match(service, /_pendingRestoreMatches, restoreLeaseIndexes, _mayOwnShortcut/)
+})
+
+test("binding ownership survives a failed exact unbind", () => {
+  assert.match(service, /old\.token ~= " \+ token/)
+  assert.match(service, /return old_handle:unbind\(\)/)
+  assert.match(service, /rawget\(_G, '__qwitch_owned_binding'\) == old then _G\.__qwitch_owned_binding = nil/)
+  assert.match(service, /return handle:unbind\(\)/)
+  assert.equal((service.match(/QWITCH_UNBIND_FAILED/g) || []).length, 2)
+})
+
+test("service drains and freshly observes before runtime readiness", () => {
+  assert.match(service, /function beginDrain\(/)
+  assert.match(service, /_runtimeAwaitingFreshDevices = true/)
+  assert.match(service, /_runtimeReadyAfterSerial = root\._deviceRefreshSerial/)
+  assert.match(service, /_activeDeviceRefreshSerial > _runtimeReadyAfterSerial/)
+  assert.match(service, /_runtimeReady = true/)
+})
+
+test("Hyprland reload abandons the exact old lease before rebasing", () => {
+  assert.match(service, /function beginReloadAbandon\(\)/)
+  assert.match(service, /_residentRuntimeHelper, "abandon", _leaseId/)
+  assert.match(service, /_reloadAbandonEpoch = _runtimeEpoch/)
+  assert.match(service, /_runtimeReadyAfterSerial = root\._deviceRefreshSerial/)
+  assert.match(service, /_postReloadBindSerial = root\._bindRefreshSerial/)
+  assert.match(service, /if \(_rebaseAfterReload \|\| abandonProcess\.running\)/)
+  assert.match(service, /if \(!_runtimeReady \|\| _rebaseAfterReload \|\| abandonProcess\.running\s*\|\| bindingProcess\.running\)/)
+})
+
+test("service lease has heartbeat and kernel identity", () => {
+  assert.match(service, /interval: 2000/)
+  assert.match(service, /"heartbeat"/)
+  assert.match(service, /inputName: String\(input\.name/)
+  assert.match(service, /identity: deviceIdentity\(device\)/)
+  assert.match(service, /ownedLayouts:/)
+  assert.match(service, /ownedIndexes:/)
+})
+
+test("destruction retires the exact resident lease", () => {
+  assert.match(service, /Component\.onDestruction: retireLease\(\)/)
+  assert.match(service, /_residentRuntimeHelper, "retire", _leaseId/)
+  assert.doesNotMatch(service, /pluginRegistry/)
+  assert.doesNotMatch(service, /cleanupDetached/)
+  assert.doesNotMatch(service, /detachedRuntimeCommand/)
+})
+
+test("first run remains observation-only", () => {
+  assert.match(service, /configuredLayouts\.length === 0/)
+  assert.match(service, /This is deliberately observation-only/)
+  assert.match(service, /if \(configuredLayouts\.length === 0\) \{/)
+})
+
+test("settings focus and manual XKB edits fail safely", () => {
+  assert.match(panel, /focusTarget: root\.settingsPage \? settingsScroll : keyCatcher/)
+  assert.match(panel, /settingsScroll\.forceActiveFocus\(\)/)
+  assert.match(panel, /Model\.normalizeLayoutEntry\(entry\)/)
+  assert.match(panel, /not available on this system/)
+})

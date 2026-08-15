@@ -1,0 +1,1216 @@
+import QtQuick
+import Quickshell
+import qs.Commons
+import qs.Ui
+import "Model.js" as Model
+
+// Qwitch's nested panel has two deliberately small surfaces:
+//   * the default layout picker
+//   * an explicit settings editor opened by right-click or the gear button
+// Runtime discovery and switching remain in Service.qml. This panel edits an
+// isolated draft and asks BarWidget.qml to persist it only when Save is used.
+Panel {
+  id: root
+  moduleName: "io.github.aloglu.qwitch"
+  manageIpc: false
+
+  property var anchorItem: null
+  property var hostWidget: null
+  property var service: null
+  readonly property var barIdentity: hostWidget || root
+
+  readonly property color contentForeground: bar ? bar.barForeground : Color.foreground
+  readonly property color contentAccent: Color.accent
+  readonly property color contentUrgent: bar && "urgent" in bar ? bar.urgent : Color.urgent
+  readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
+
+  property bool settingsPage: false
+  property int selectorIndex: 0
+  property int editingLayoutIndex: -1
+  property string selectedCatalogValue: ""
+  property bool capturingShortcut: false
+  property string draftError: ""
+  property string shortcutError: ""
+  property string saveStatus: ""
+  property var pendingSecurityDevice: null
+  property var draft: ({
+    layouts: [],
+    displayMode: "both",
+    osdEnabled: false,
+    shortcut: null,
+    deviceOverrides: ({})
+  })
+
+  function arrayFrom(value) {
+    if (!value || typeof value === "string" || typeof value.length !== "number") return []
+    var out = []
+    for (var i = 0; i < value.length; i++) out.push(value[i])
+    return out
+  }
+
+  function objectFrom(value) {
+    return value && typeof value === "object" && typeof value.length !== "number"
+      ? value : ({})
+  }
+
+  function clone(value, fallback) {
+    try {
+      if (value === undefined) return fallback
+      return JSON.parse(JSON.stringify(value))
+    } catch (error) {
+      return fallback
+    }
+  }
+
+  function layoutKey(entry) {
+    if (!entry || typeof entry !== "object") return ""
+    return String(entry.layout || "").trim() + "\u001f" + String(entry.variant || "").trim()
+  }
+
+  function normalizedLayout(entry) {
+    var source = entry && typeof entry === "object" ? entry : ({})
+    return {
+      layout: String(source.layout || "").trim(),
+      variant: String(source.variant || "").trim(),
+      label: source.label
+        ? String(source.label).trim() : String(source.layout || "").trim().toUpperCase(),
+      flag: String(source.flag || "").trim()
+    }
+  }
+
+  function displayFor(entry, mode) {
+    if (entry && root.service && typeof root.service.displayTextFor === "function") {
+      var rendered = root.service.displayTextFor(entry, mode || "both")
+      if (rendered !== undefined && rendered !== null && String(rendered) !== "")
+        return String(rendered)
+    }
+    var item = normalizedLayout(entry)
+    var selectedMode = ["text", "flag", "both"].indexOf(String(mode || "")) === -1
+      ? "both" : String(mode)
+    if (selectedMode === "flag") return item.flag || item.label
+    if (selectedMode === "text") return item.label || item.flag
+    return item.flag && item.label ? item.flag + " " + item.label : (item.flag || item.label)
+  }
+
+  readonly property var selectorLayouts: {
+    var live = root.service ? root.arrayFrom(root.service.layouts) : []
+    if (live.length > 0) return live
+    return root.arrayFrom(root.settings ? root.settings.layouts : [])
+  }
+
+  readonly property var draftLayouts: root.arrayFrom(root.draft ? root.draft.layouts : [])
+  readonly property var detectedDevices: root.service ? root.arrayFrom(root.service.devices) : []
+  readonly property string heroTitle: {
+    if (root.service && root.service.mixedState === true) return "Mixed layouts"
+    var rendered = root.displayFor(root.service ? root.service.activeLayout : null,
+      root.settings ? root.settings.displayMode : "both")
+    return rendered || "Keyboard layouts"
+  }
+
+  function prepareDraft() {
+    var source = objectFrom(root.settings)
+    var layouts = arrayFrom(source.layouts)
+
+    // On first enable the service may expose an unambiguous compositor layout
+    // without persisting it. Seed the editor from that observation only; the
+    // shell entry changes solely after the user presses Save.
+    if (layouts.length === 0 && root.service) layouts = arrayFrom(root.service.layouts)
+
+    var normalized = []
+    for (var i = 0; i < layouts.length; i++) normalized.push(normalizedLayout(layouts[i]))
+    var mode = String(source.displayMode || "both")
+    if (["text", "flag", "both"].indexOf(mode) === -1) mode = "both"
+
+    root.draft = {
+      layouts: normalized,
+      displayMode: mode,
+      osdEnabled: source.osdEnabled === true,
+      shortcut: clone(source.shortcut, null),
+      deviceOverrides: clone(objectFrom(source.deviceOverrides), ({}))
+    }
+    root.editingLayoutIndex = normalized.length > 0 ? 0 : -1
+    root.selectedCatalogValue = ""
+    root.capturingShortcut = false
+    root.pendingSecurityDevice = null
+    root.draftError = ""
+    root.shortcutError = ""
+    root.saveStatus = ""
+    if (root.service && typeof root.service.refreshCatalog === "function") root.service.refreshCatalog()
+    if (root.service && typeof root.service.refreshDevices === "function") root.service.refreshDevices()
+  }
+
+  function syncSelectorIndex() {
+    var length = root.selectorLayouts.length
+    if (length === 0) {
+      root.selectorIndex = 0
+      return
+    }
+    var active = root.service ? Number(root.service.activeIndex) : -1
+    root.selectorIndex = active >= 0 && active < length
+      ? active : Math.max(0, Math.min(root.selectorIndex, length - 1))
+  }
+
+  function open() {
+    root.settingsPage = false
+    root.syncSelectorIndex()
+    root.controller.show()
+  }
+
+  function openSettings() {
+    if (!root.settingsPage) root.prepareDraft()
+    root.settingsPage = true
+    root.controller.show()
+    Qt.callLater(function() { settingsScroll.forceActiveFocus() })
+  }
+
+  function close() {
+    root.capturingShortcut = false
+    root.pendingSecurityDevice = null
+    root.settingsPage = false
+    root.controller.hide()
+  }
+
+  function toggle() {
+    if (root.opened) root.close()
+    else root.open()
+  }
+
+  function cancelSettings() {
+    root.capturingShortcut = false
+    root.pendingSecurityDevice = null
+    root.settingsPage = false
+    root.syncSelectorIndex()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function switchPanel(direction) {
+    if (root.bar && typeof root.bar.switchPanelFrom === "function")
+      return root.bar.switchPanelFrom(root.barIdentity, direction)
+    return false
+  }
+
+  function moveSelector(delta) {
+    var count = root.selectorLayouts.length
+    if (count === 0) return
+    root.selectorIndex = (root.selectorIndex + delta + count) % count
+  }
+
+  function chooseLayout(index) {
+    if (!root.service || typeof root.service.switchTo !== "function") {
+      root.draftError = "Qwitch service is not available."
+      return
+    }
+    if (index < 0 || index >= root.selectorLayouts.length) return
+    var accepted = root.service.switchTo(index)
+    if (accepted !== false) root.close()
+  }
+
+  function layoutAt(index) {
+    return index >= 0 && index < root.draftLayouts.length
+      ? root.draftLayouts[index] : ({ layout: "", variant: "", label: "", flag: "" })
+  }
+
+  function replaceLayouts(layouts, selectedIndex) {
+    root.draft = {
+      layouts: layouts,
+      displayMode: String(root.draft.displayMode || "both"),
+      osdEnabled: root.draft.osdEnabled === true,
+      shortcut: clone(root.draft.shortcut, null),
+      deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({}))
+    }
+    root.editingLayoutIndex = selectedIndex
+    root.draftError = ""
+    root.saveStatus = ""
+  }
+
+  function updateLayout(index, field, value) {
+    var layouts = clone(root.draftLayouts, [])
+    if (index < 0 || index >= layouts.length) return
+    var next = normalizedLayout(layouts[index])
+    next[field] = String(value || "").trim()
+    layouts[index] = next
+    replaceLayouts(layouts, index)
+  }
+
+  function moveLayout(index, delta) {
+    var layouts = clone(root.draftLayouts, [])
+    var target = index + delta
+    if (index < 0 || index >= layouts.length || target < 0 || target >= layouts.length) return
+    var item = layouts[index]
+    layouts.splice(index, 1)
+    layouts.splice(target, 0, item)
+    replaceLayouts(layouts, target)
+  }
+
+  function removeLayout(index) {
+    var layouts = clone(root.draftLayouts, [])
+    if (index < 0 || index >= layouts.length) return
+    layouts.splice(index, 1)
+    var next = layouts.length === 0 ? -1 : Math.min(index, layouts.length - 1)
+    replaceLayouts(layouts, next)
+  }
+
+  function catalogOptionsFor(value) {
+    var entries = arrayFrom(value)
+    var out = []
+    var seen = ({})
+    for (var i = 0; i < entries.length; i++) {
+      var raw = entries[i]
+      var source = raw && typeof raw === "object" ? raw : ({ layout: String(raw || "") })
+      var layout = String(source.layout || source.code || source.name || source.value || "").trim()
+      var variant = String(source.variant || "").trim()
+      if (!layout) continue
+      var key = layout + "\u001f" + variant
+      if (seen[key]) continue
+      seen[key] = true
+      var human = String(source.description || source.label || layout).trim()
+      var title = variant ? human + " — " + variant : human
+      out.push({
+        value: key,
+        label: title,
+        description: variant ? layout + " (" + variant + ")" : layout,
+        layout: layout,
+        variant: variant,
+        shortLabel: String(source.shortLabel || source.abbreviation || source.brief
+          || source.label || layout).trim().toUpperCase(),
+        flag: String(source.flag || "").trim()
+      })
+    }
+    return out
+  }
+
+  readonly property var catalogOptions: catalogOptionsFor(service ? service.catalog : [])
+
+  function catalogEntry(value) {
+    var options = root.catalogOptions
+    for (var i = 0; i < options.length; i++) if (options[i].value === value) return options[i]
+    return null
+  }
+
+  function addSelectedCatalogLayout() {
+    var selected = catalogEntry(root.selectedCatalogValue)
+    if (!selected) {
+      root.draftError = "Choose a keyboard layout to add."
+      return
+    }
+    var entry = {
+      layout: selected.layout,
+      variant: selected.variant,
+      label: selected.shortLabel,
+      flag: selected.flag
+    }
+    var layouts = clone(root.draftLayouts, [])
+    var key = layoutKey(entry)
+    for (var i = 0; i < layouts.length; i++) {
+      if (layoutKey(layouts[i]) === key) {
+        root.editingLayoutIndex = i
+        root.draftError = "That layout and variant are already in the list."
+        return
+      }
+    }
+    layouts.push(entry)
+    replaceLayouts(layouts, layouts.length - 1)
+    root.selectedCatalogValue = ""
+  }
+
+  function setDraftValue(key, value) {
+    var next = clone(root.draft, ({}))
+    next[key] = value
+    root.draft = next
+    root.draftError = ""
+    root.saveStatus = ""
+  }
+
+  function deviceFingerprint(device) {
+    if (!device || typeof device !== "object") return ""
+    return String(device.fingerprint || "")
+  }
+
+  function deviceLabel(device) {
+    if (!device || typeof device !== "object") return "Unknown input device"
+    return String(device.label || device.name || device.fingerprint || "Unknown input device")
+  }
+
+  function deviceOverrideValue(device) {
+    var fingerprint = deviceFingerprint(device)
+    var overrides = objectFrom(root.draft.deviceOverrides)
+    var explicitValue = String(overrides[fingerprint] || (device && device.override) || "auto")
+    return ["auto", "manage", "ignore"].indexOf(explicitValue) === -1 ? "auto" : explicitValue
+  }
+
+  function setDeviceOverride(device, value) {
+    var fingerprint = deviceFingerprint(device)
+    if (!fingerprint) return
+    var old = objectFrom(root.draft.deviceOverrides)
+    var overrides = ({})
+    for (var key in old) if (key !== fingerprint) overrides[key] = old[key]
+    if (value === "manage" || value === "ignore") overrides[fingerprint] = value
+    setDraftValue("deviceOverrides", overrides)
+    root.pendingSecurityDevice = null
+  }
+
+  function requestDeviceOverride(device, value) {
+    if (value === "manage" && device && device.security === true) {
+      root.pendingSecurityDevice = device
+      return
+    }
+    setDeviceOverride(device, value)
+  }
+
+  function isPendingSecurityDevice(device) {
+    return root.pendingSecurityDevice
+      && deviceFingerprint(root.pendingSecurityDevice) === deviceFingerprint(device)
+  }
+
+  function shortcutSummary(shortcut) {
+    if (!shortcut) return "Not assigned"
+    if (typeof shortcut === "string") return shortcut || "Not assigned"
+    var parts = arrayFrom(shortcut.modifiers)
+    var key = String(shortcut.key || shortcut.name || "")
+    if (key) parts.push(key)
+    return parts.length > 0 ? parts.join(" + ") : "Not assigned"
+  }
+
+  function isModifierKey(key) {
+    return key === Qt.Key_Shift || key === Qt.Key_Control || key === Qt.Key_Meta
+      || key === Qt.Key_Alt || key === Qt.Key_AltGr || key === Qt.Key_CapsLock
+  }
+
+  function keyName(event) {
+    var key = Number(event.key)
+    if (key >= Qt.Key_A && key <= Qt.Key_Z) return String.fromCharCode(key)
+    if (key >= Qt.Key_0 && key <= Qt.Key_9) return String.fromCharCode(key)
+    if (key >= Qt.Key_F1 && key <= Qt.Key_F35) return "F" + String(key - Qt.Key_F1 + 1)
+    if (key === Qt.Key_Space) return "Space"
+    if (key === Qt.Key_Escape) return "Escape"
+    if (key === Qt.Key_Tab) return "Tab"
+    if (key === Qt.Key_Backtab) return "Backtab"
+    if (key === Qt.Key_Return || key === Qt.Key_Enter) return "Enter"
+    if (key === Qt.Key_Backspace) return "Backspace"
+    if (key === Qt.Key_Delete) return "Delete"
+    if (key === Qt.Key_Insert) return "Insert"
+    if (key === Qt.Key_Home) return "Home"
+    if (key === Qt.Key_End) return "End"
+    if (key === Qt.Key_PageUp) return "PageUp"
+    if (key === Qt.Key_PageDown) return "PageDown"
+    if (key === Qt.Key_Left) return "Left"
+    if (key === Qt.Key_Right) return "Right"
+    if (key === Qt.Key_Up) return "Up"
+    if (key === Qt.Key_Down) return "Down"
+    if (key === Qt.Key_Print) return "Print"
+    if (key === Qt.Key_Pause) return "Pause"
+    if (key === Qt.Key_VolumeMute) return "VolumeMute"
+    if (key === Qt.Key_VolumeDown) return "VolumeDown"
+    if (key === Qt.Key_VolumeUp) return "VolumeUp"
+    if (key === Qt.Key_MediaPlay) return "MediaPlay"
+    if (key === Qt.Key_MediaPause) return "MediaPause"
+    if (key === Qt.Key_MediaStop) return "MediaStop"
+    if (key === Qt.Key_MediaPrevious) return "MediaPrevious"
+    if (key === Qt.Key_MediaNext) return "MediaNext"
+    if (key === Qt.Key_MonBrightnessDown) return "MonBrightnessDown"
+    if (key === Qt.Key_MonBrightnessUp) return "MonBrightnessUp"
+    if (key === Qt.Key_KeyboardBrightnessDown) return "KbdBrightnessDown"
+    if (key === Qt.Key_KeyboardBrightnessUp) return "KbdBrightnessUp"
+    if (event.text && String(event.text).trim() !== "") return String(event.text).toUpperCase()
+    return "Key 0x" + key.toString(16).toUpperCase()
+  }
+
+  function recordShortcut(event) {
+    if (!root.capturingShortcut) return
+    if (event.key === Qt.Key_Escape && event.modifiers === Qt.NoModifier) {
+      root.capturingShortcut = false
+      root.shortcutError = ""
+      event.accepted = true
+      return
+    }
+    if (isModifierKey(event.key)) {
+      event.accepted = true
+      return
+    }
+
+    var modifiers = []
+    if (event.modifiers & Qt.MetaModifier) modifiers.push("SUPER")
+    if (event.modifiers & Qt.ControlModifier) modifiers.push("CTRL")
+    if (event.modifiers & Qt.AltModifier) modifiers.push("ALT")
+    if (event.modifiers & Qt.ShiftModifier) modifiers.push("SHIFT")
+
+    var shortcut = {
+      modifiers: modifiers,
+      key: keyName(event),
+      code: Number(event.nativeScanCode || 0)
+    }
+    var error = root.service && typeof root.service.validateShortcut === "function"
+      ? String(root.service.validateShortcut(shortcut) || "") : ""
+    if (error) {
+      root.shortcutError = error
+    } else {
+      setDraftValue("shortcut", shortcut)
+      root.shortcutError = ""
+      root.capturingShortcut = false
+    }
+    event.accepted = true
+  }
+
+  function validateDraft() {
+    var layouts = root.draftLayouts
+    var maximumLayouts = root.service && Number(root.service.maximumLayouts) > 0
+      ? Number(root.service.maximumLayouts) : 16
+    if (layouts.length > maximumLayouts)
+      return "Qwitch supports at most " + maximumLayouts + " layouts."
+    if (layouts.length === 0 && root.draft.shortcut)
+      return "Add a layout before assigning a shortcut."
+    var seen = ({})
+    for (var i = 0; i < layouts.length; i++) {
+      var entry = normalizedLayout(layouts[i])
+      var validated = Model.normalizeLayoutEntry(entry)
+      if (!validated)
+        return "Use a valid XKB layout and variant name."
+      if (root.catalogOptions.length > 0 && !root.catalogEntry(root.layoutKey(validated)))
+        return "That XKB layout and variant are not available on this system."
+      var key = layoutKey(entry)
+      if (seen[key]) return "Each layout and variant combination must be unique."
+      seen[key] = true
+    }
+    if (root.draft.shortcut && root.service && typeof root.service.validateShortcut === "function") {
+      var shortcutValidation = String(root.service.validateShortcut(root.draft.shortcut) || "")
+      if (shortcutValidation) return shortcutValidation
+    }
+    return ""
+  }
+
+  function saveSettings() {
+    var validation = validateDraft()
+    if (validation) {
+      root.draftError = validation
+      root.saveStatus = ""
+      return
+    }
+    if (!root.hostWidget || typeof root.hostWidget.persistSettings !== "function") {
+      root.draftError = "The Qwitch bar widget is not available to save settings."
+      return
+    }
+
+    var layouts = []
+    for (var i = 0; i < root.draftLayouts.length; i++) {
+      var normalized = Model.normalizeLayoutEntry(normalizedLayout(root.draftLayouts[i]))
+      if (normalized) layouts.push(normalized)
+    }
+    var candidate = {
+      layouts: layouts,
+      displayMode: String(root.draft.displayMode || "both"),
+      osdEnabled: root.draft.osdEnabled === true,
+      shortcut: clone(root.draft.shortcut, null),
+      deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({}))
+    }
+
+    root.hostWidget.persistSettings(candidate)
+    root.draft = clone(candidate, candidate)
+    root.draftError = ""
+    root.shortcutError = ""
+    root.saveStatus = "Settings saved."
+  }
+
+  onServiceChanged: {
+    if (!root.settingsPage) root.syncSelectorIndex()
+  }
+
+  KeyboardPanel {
+    id: panel
+    anchorItem: root.anchorItem
+    owner: root.barIdentity
+    bar: root.bar
+    open: root.opened
+    focusTarget: root.settingsPage ? settingsScroll : keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(540))
+    contentHeight: panel.fittedContentHeight(
+      root.settingsPage ? Style.space(650) : selectorPage.implicitHeight,
+      Style.space(720))
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      blocked: root.settingsPage
+      onMoveRequested: function(dx, dy) {
+        if (dy !== 0) root.moveSelector(dy)
+      }
+      onActivateRequested: root.chooseLayout(root.selectorIndex)
+      onCloseRequested: root.close()
+      onTabRequested: function(direction) { root.switchPanel(direction) }
+      onTextKey: function(text) {
+        if (text === "s" || text === "S" || text === ",") root.openSettings()
+      }
+
+      Column {
+        id: selectorPage
+        visible: !root.settingsPage
+        width: parent.width
+        spacing: Style.space(10)
+
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+
+          PanelHero {
+            width: Math.max(0, parent.width - settingsButton.implicitWidth - parent.spacing)
+            title: "󰌌  " + root.heroTitle
+            meta: root.service && root.service.busy === true ? "Qwitch · switching" : "Qwitch"
+            detail: root.selectorLayouts.length > 0 ? String(root.selectorLayouts.length) : ""
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          PanelActionButton {
+            id: settingsButton
+            iconText: "󰒓"
+            tooltipText: "Qwitch settings"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            focusable: true
+            onClicked: root.openSettings()
+          }
+        }
+
+        PanelSeparator { foreground: root.contentForeground }
+        PanelSectionHeader {
+          text: "Keyboard layouts"
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+        }
+
+        Text {
+          visible: root.selectorLayouts.length === 0
+          width: parent.width
+          text: "No layouts are configured. Open settings to add one."
+          color: Qt.darker(root.contentForeground, 1.4)
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.body
+          wrapMode: Text.WordWrap
+        }
+
+        Text {
+          visible: root.selectorLayouts.length > 0
+            && root.service && root.service.configuredLayouts.length === 0
+          width: parent.width
+          text: "Observed from Hyprland. Save it in Qwitch settings before switching."
+          color: Qt.darker(root.contentForeground, 1.4)
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
+        Flickable {
+          id: layoutPickerScroll
+          visible: root.selectorLayouts.length > 0
+          width: parent.width
+          height: Math.min(layoutPickerColumn.implicitHeight, Style.space(360))
+          contentWidth: width
+          contentHeight: layoutPickerColumn.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+
+          Column {
+            id: layoutPickerColumn
+            width: layoutPickerScroll.width
+            spacing: Style.space(4)
+
+            Repeater {
+              model: root.selectorLayouts
+
+              delegate: Button {
+                required property var modelData
+                required property int index
+                width: layoutPickerColumn.width
+                text: root.displayFor(modelData,
+                  root.settings ? root.settings.displayMode : "both")
+                iconText: root.service && root.service.activeIndex === index
+                  && root.service.mixedState !== true ? "󰄬" : ""
+                leftAlign: true
+                bordered: true
+                selected: root.service && root.service.activeIndex === index
+                  && root.service.mixedState !== true
+                hasCursor: root.selectorIndex === index
+                enabled: root.service && root.service.canSwitch === true
+                foreground: root.contentForeground
+                accent: root.contentAccent
+                fontFamily: root.contentFontFamily
+                onHovered: function(isHovered) {
+                  if (isHovered) root.selectorIndex = index
+                }
+                onClicked: root.chooseLayout(index)
+              }
+            }
+          }
+        }
+
+        Text {
+          visible: root.service && String(root.service.lastError || "") !== ""
+          width: parent.width
+          text: root.service ? String(root.service.lastError || "") : ""
+          color: root.contentUrgent
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+      }
+
+      Flickable {
+        id: settingsScroll
+        visible: root.settingsPage
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: settingsColumn.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        Keys.priority: Keys.AfterItem
+        Keys.onPressed: function(event) {
+          if (event.key === Qt.Key_Escape) {
+            root.cancelSettings()
+            event.accepted = true
+          }
+        }
+
+        Column {
+          id: settingsColumn
+          width: settingsScroll.width
+          spacing: Style.space(10)
+
+          PanelHero {
+            width: parent.width
+            title: "󰌌  Qwitch settings"
+            meta: "Changes apply only when saved"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          PanelSeparator { foreground: root.contentForeground }
+          PanelSectionHeader {
+            text: "Layouts"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+
+            SearchableDropdown {
+              id: catalogDropdown
+              width: Math.max(Style.space(220), parent.width - addLayoutButton.implicitWidth
+                - refreshCatalogButton.implicitWidth - parent.spacing * 2)
+              showLabel: false
+              options: root.catalogOptions
+              value: root.selectedCatalogValue
+              triggerLabel: root.service && root.service.catalogLoading === true
+                ? "Loading layouts…" : "Choose a layout…"
+              placeholderText: "Search XKB layouts…"
+              emptyText: root.service && root.service.catalogLoading === true
+                ? "Loading…" : "No layouts found"
+              foreground: root.contentForeground
+              accent: root.contentAccent
+              fontFamily: root.contentFontFamily
+              onChanged: function(value) { root.selectedCatalogValue = value }
+            }
+
+            PanelActionButton {
+              id: refreshCatalogButton
+              iconText: "󰑐"
+              tooltipText: "Refresh layout catalogue"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              focusable: true
+              enabled: !(root.service && root.service.catalogLoading === true)
+              onClicked: if (root.service && typeof root.service.refreshCatalog === "function")
+                root.service.refreshCatalog()
+            }
+
+            Button {
+              id: addLayoutButton
+              text: "Add"
+              bordered: true
+              focusable: true
+              enabled: root.selectedCatalogValue !== ""
+              foreground: root.contentForeground
+              accent: root.contentAccent
+              fontFamily: root.contentFontFamily
+              onClicked: root.addSelectedCatalogLayout()
+            }
+          }
+
+          Text {
+            visible: root.service && String(root.service.catalogError || "") !== ""
+            width: parent.width
+            text: root.service ? String(root.service.catalogError || "") : ""
+            color: root.contentUrgent
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            visible: root.draftLayouts.length === 0
+            width: parent.width
+            text: "No saved layouts leaves Qwitch observation-only."
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+          }
+
+          Repeater {
+            model: root.draftLayouts
+
+            delegate: Row {
+              required property var modelData
+              required property int index
+              width: settingsColumn.width
+              spacing: Style.space(4)
+
+              Button {
+                width: Math.max(Style.space(140), parent.width
+                  - moveUpButton.implicitWidth - moveDownButton.implicitWidth
+                  - removeButton.implicitWidth - parent.spacing * 3)
+                text: root.displayFor(modelData, "both")
+                  + (String(modelData.variant || "") ? " · " + String(modelData.variant) : "")
+                leftAlign: true
+                bordered: true
+                selected: root.editingLayoutIndex === index
+                focusable: true
+                foreground: root.contentForeground
+                accent: root.contentAccent
+                fontFamily: root.contentFontFamily
+                onClicked: root.editingLayoutIndex = index
+              }
+
+              PanelActionButton {
+                id: moveUpButton
+                iconText: "󰁝"
+                tooltipText: "Move up"
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                focusable: true
+                enabled: index > 0
+                onClicked: root.moveLayout(index, -1)
+              }
+
+              PanelActionButton {
+                id: moveDownButton
+                iconText: "󰁅"
+                tooltipText: "Move down"
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                focusable: true
+                enabled: index < root.draftLayouts.length - 1
+                onClicked: root.moveLayout(index, 1)
+              }
+
+              PanelActionButton {
+                id: removeButton
+                iconText: "󰅙"
+                tooltipText: "Remove layout"
+                foreground: root.contentForeground
+                hoverColor: root.contentUrgent
+                fontFamily: root.contentFontFamily
+                focusable: true
+                onClicked: root.removeLayout(index)
+              }
+            }
+          }
+
+          Column {
+            visible: root.editingLayoutIndex >= 0
+              && root.editingLayoutIndex < root.draftLayouts.length
+            width: parent.width
+            spacing: Style.space(6)
+
+            Text {
+              width: parent.width
+              text: root.editingLayoutIndex >= 0
+                ? "Edit " + root.displayFor(root.layoutAt(root.editingLayoutIndex), "both") : ""
+              color: Qt.darker(root.contentForeground, 1.4)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Column {
+                width: (parent.width - parent.spacing) / 2
+                spacing: Style.space(3)
+                Text {
+                  text: "XKB layout"
+                  color: Qt.darker(root.contentForeground, 1.4)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                }
+                TextField {
+                  width: parent.width
+                  text: root.layoutAt(root.editingLayoutIndex).layout
+                  placeholderText: "us"
+                  foreground: root.contentForeground
+                  accent: root.contentAccent
+                  font.family: root.contentFontFamily
+                  onTextEdited: root.updateLayout(root.editingLayoutIndex, "layout", text)
+                }
+              }
+
+              Column {
+                width: (parent.width - parent.spacing) / 2
+                spacing: Style.space(3)
+                Text {
+                  text: "Variant"
+                  color: Qt.darker(root.contentForeground, 1.4)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                }
+                TextField {
+                  width: parent.width
+                  text: root.layoutAt(root.editingLayoutIndex).variant
+                  placeholderText: "Optional"
+                  foreground: root.contentForeground
+                  accent: root.contentAccent
+                  font.family: root.contentFontFamily
+                  onTextEdited: root.updateLayout(root.editingLayoutIndex, "variant", text)
+                }
+              }
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Column {
+                width: (parent.width - parent.spacing) * 0.65
+                spacing: Style.space(3)
+                Text {
+                  text: "Bar label"
+                  color: Qt.darker(root.contentForeground, 1.4)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                }
+                TextField {
+                  width: parent.width
+                  text: root.layoutAt(root.editingLayoutIndex).label
+                  placeholderText: "EN"
+                  foreground: root.contentForeground
+                  accent: root.contentAccent
+                  font.family: root.contentFontFamily
+                  onTextEdited: root.updateLayout(root.editingLayoutIndex, "label", text)
+                }
+              }
+
+              Column {
+                width: (parent.width - parent.spacing) * 0.35
+                spacing: Style.space(3)
+                Text {
+                  text: "Flag"
+                  color: Qt.darker(root.contentForeground, 1.4)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                }
+                TextField {
+                  width: parent.width
+                  text: root.layoutAt(root.editingLayoutIndex).flag
+                  placeholderText: "🇺🇸"
+                  foreground: root.contentForeground
+                  accent: root.contentAccent
+                  font.family: root.contentFontFamily
+                  onTextEdited: root.updateLayout(root.editingLayoutIndex, "flag", text)
+                }
+              }
+            }
+          }
+
+          PanelSeparator { foreground: root.contentForeground }
+          PanelSectionHeader {
+            text: "Display"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          ButtonGroup {
+            options: [
+              { value: "text", label: "Text" },
+              { value: "flag", label: "Flag" },
+              { value: "both", label: "Both" }
+            ]
+            value: String(root.draft.displayMode || "both")
+            foreground: root.contentForeground
+            accent: root.contentAccent
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.setDraftValue("displayMode", value) }
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Show layout changes on the OSD"
+            description: "Uses the same text, flag, or combined display selected above."
+            checked: root.draft.osdEnabled === true
+            foreground: root.contentForeground
+            accent: root.contentAccent
+            fontFamily: root.contentFontFamily
+            onClicked: root.setDraftValue("osdEnabled", !root.draft.osdEnabled)
+          }
+
+          PanelSeparator { foreground: root.contentForeground }
+          PanelSectionHeader {
+            text: "Shortcut"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+
+            TextField {
+              id: shortcutField
+              width: Math.max(Style.space(180), parent.width - recordShortcutButton.implicitWidth
+                - clearShortcutButton.implicitWidth - parent.spacing * 2)
+              readOnly: true
+              text: root.capturingShortcut
+                ? "Press a key combination…" : root.shortcutSummary(root.draft.shortcut)
+              foreground: root.contentForeground
+              accent: root.contentAccent
+              font.family: root.contentFontFamily
+              Keys.priority: Keys.BeforeItem
+              Keys.onPressed: function(event) { root.recordShortcut(event) }
+            }
+
+            Button {
+              id: recordShortcutButton
+              text: root.capturingShortcut ? "Cancel" : "Record"
+              bordered: true
+              focusable: true
+              foreground: root.contentForeground
+              accent: root.contentAccent
+              fontFamily: root.contentFontFamily
+              onClicked: {
+                root.capturingShortcut = !root.capturingShortcut
+                root.shortcutError = ""
+                if (root.capturingShortcut)
+                  Qt.callLater(function() { shortcutField.forceActiveFocus() })
+              }
+            }
+
+            PanelActionButton {
+              id: clearShortcutButton
+              iconText: "󰅙"
+              tooltipText: "Clear shortcut"
+              foreground: root.contentForeground
+              hoverColor: root.contentUrgent
+              fontFamily: root.contentFontFamily
+              focusable: true
+              enabled: root.draft.shortcut !== null && root.draft.shortcut !== undefined
+              onClicked: {
+                root.capturingShortcut = false
+                root.shortcutError = ""
+                root.setDraftValue("shortcut", null)
+              }
+            }
+          }
+
+          Text {
+            visible: root.shortcutError !== ""
+            width: parent.width
+            text: root.shortcutError
+            color: root.contentUrgent
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            visible: root.service && root.service.shortcutConflict
+              && String(root.service.shortcutConflict) !== ""
+            width: parent.width
+            text: root.service ? String(root.service.shortcutConflict || "") : ""
+            color: root.contentUrgent
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          PanelSeparator { foreground: root.contentForeground }
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+
+            PanelSectionHeader {
+              width: Math.max(0, parent.width - refreshDevicesButton.implicitWidth - parent.spacing)
+              text: "Input devices"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+            }
+
+            PanelActionButton {
+              id: refreshDevicesButton
+              iconText: "󰑐"
+              tooltipText: "Refresh input devices"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              focusable: true
+              onClicked: if (root.service && typeof root.service.refreshDevices === "function")
+                root.service.refreshDevices()
+            }
+          }
+
+          Text {
+            visible: root.detectedDevices.length === 0
+            width: parent.width
+            text: "No keyboard-like devices were detected."
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+          }
+
+          Repeater {
+            model: root.detectedDevices
+
+            delegate: Column {
+              required property var modelData
+              required property int index
+              width: settingsColumn.width
+              spacing: Style.space(5)
+
+              Text {
+                width: parent.width
+                text: root.deviceLabel(modelData)
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+                elide: Text.ElideRight
+              }
+
+              Text {
+                visible: String(modelData.reason || "") !== ""
+                width: parent.width
+                text: String(modelData.reason || "")
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              ButtonGroup {
+                options: [
+                  { value: "auto", label: "Auto" },
+                  { value: "manage", label: "Manage" },
+                  { value: "ignore", label: "Ignore" }
+                ]
+                value: root.deviceOverrideValue(modelData)
+                enabled: root.deviceFingerprint(modelData) !== ""
+                foreground: root.contentForeground
+                accent: root.contentAccent
+                fontFamily: root.contentFontFamily
+                onChanged: function(value) { root.requestDeviceOverride(modelData, value) }
+              }
+
+              Text {
+                visible: root.isPendingSecurityDevice(modelData)
+                width: parent.width
+                text: "This device is identified as a security token. Managing it can interfere with OTP or FIDO input."
+                color: root.contentUrgent
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              Row {
+                visible: root.isPendingSecurityDevice(modelData)
+                spacing: Style.space(6)
+
+                Button {
+                  text: "Manage anyway"
+                  bordered: true
+                  focusable: true
+                  foreground: root.contentUrgent
+                  accent: root.contentUrgent
+                  fontFamily: root.contentFontFamily
+                  onClicked: root.setDeviceOverride(modelData, "manage")
+                }
+
+                Button {
+                  text: "Keep automatic"
+                  bordered: true
+                  focusable: true
+                  foreground: root.contentForeground
+                  accent: root.contentAccent
+                  fontFamily: root.contentFontFamily
+                  onClicked: root.pendingSecurityDevice = null
+                }
+              }
+
+              PanelSeparator {
+                visible: index < root.detectedDevices.length - 1
+                foreground: root.contentForeground
+              }
+            }
+          }
+
+          Text {
+            visible: root.draftError !== ""
+            width: parent.width
+            text: root.draftError
+            color: root.contentUrgent
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            visible: root.service && String(root.service.lastError || "") !== ""
+            width: parent.width
+            text: root.service ? String(root.service.lastError || "") : ""
+            color: root.contentUrgent
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            visible: root.saveStatus !== ""
+            width: parent.width
+            text: root.saveStatus
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Button {
+              width: (parent.width - parent.spacing) / 2
+              text: "Cancel"
+              bordered: true
+              focusable: true
+              foreground: root.contentForeground
+              accent: root.contentAccent
+              fontFamily: root.contentFontFamily
+              onClicked: root.cancelSettings()
+            }
+
+            Button {
+              width: (parent.width - parent.spacing) / 2
+              text: root.service && root.service.busy === true ? "Applying…" : "Save"
+              bordered: true
+              focusable: true
+              enabled: !(root.service && root.service.busy === true)
+              foreground: root.contentForeground
+              accent: root.contentAccent
+              fontFamily: root.contentFontFamily
+              onClicked: root.saveSettings()
+            }
+          }
+        }
+      }
+    }
+  }
+}

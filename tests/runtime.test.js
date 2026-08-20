@@ -35,10 +35,10 @@ exit 0
   const env = {
     ...process.env,
     XDG_RUNTIME_DIR: root,
-    QWITCH_HYPRCTL: fake,
-    QWITCH_PROC_INPUT: proc,
-    QWITCH_TEST_MODE: "1",
-    QWITCH_TEST_DISABLE_GUARDIAN: "1",
+    qwitch_hyprctl: fake,
+    qwitch_proc_input: proc,
+    qwitch_test_mode: "1",
+    qwitch_test_disable_guardian: "1",
     HYPRLAND_INSTANCE_SIGNATURE: "fake-hypr",
     FAKE_LOG: log,
     FAKE_DEVICES: devices
@@ -248,7 +248,7 @@ test("Hyprland command timeout retains the conservative pre-state", () => {
   const started = Date.now()
   const result = arm(ctx, pre, post, {
     FAKE_SLEEP_SECONDS: "2",
-    QWITCH_HYPR_TIMEOUT_SECONDS: "1"
+    qwitch_hypr_timeout_seconds: "1"
   })
   assert.equal(result.status, 1)
   assert.ok(Date.now() - started < 1800, "hyprctl timeout was not bounded")
@@ -312,8 +312,8 @@ test("resident guardian retires safely after checkout deletion and can be re-arm
   ctx.executable = source
 
   const guardianEnv = {
-    QWITCH_TEST_DISABLE_GUARDIAN: "0",
-    QWITCH_TEST_GUARDIAN_POLL_SECONDS: "0.2"
+    qwitch_test_disable_guardian: "0",
+    qwitch_test_guardian_poll_seconds: "0.2"
   }
   const bootstrap = run(ctx, ["bootstrap"], guardianEnv)
   assert.equal(bootstrap.status, 0, bootstrap.stderr)

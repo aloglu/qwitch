@@ -16,10 +16,13 @@ test("project branding consistently uses lowercase qwitch", () => {
 
   for (const filename of [
     "BarWidget.qml", "Model.js", "Panel.qml", "README.md", "Service.qml",
-    "manifest.json", "qwitch-runtime"
+    "manifest.json", "qwitch-runtime", "tests/model.test.js",
+    "tests/runtime.test.js", "tests/service.test.js"
   ]) {
     const contents = fs.readFileSync(path.join(projectRoot, filename), "utf8")
-    assert.doesNotMatch(contents, /\bQwitch\b/, `${filename} contains capitalized branding`)
+    for (const match of contents.matchAll(/qwitch[A-Za-z0-9_]*/gi))
+      assert.equal(match[0], match[0].toLowerCase(),
+        `${filename} contains a non-lowercase qwitch identifier`)
   }
 })
 
@@ -57,7 +60,7 @@ test("binding ownership survives a failed exact unbind", () => {
   assert.match(service, /return old_handle:unbind\(\)/)
   assert.match(service, /rawget\(_G, '__qwitch_owned_binding'\) == old then _G\.__qwitch_owned_binding = nil/)
   assert.match(service, /return handle:unbind\(\)/)
-  assert.equal((service.match(/QWITCH_UNBIND_FAILED/g) || []).length, 2)
+  assert.equal((service.match(/qwitch_unbind_failed/g) || []).length, 2)
 })
 
 test("service drains and freshly observes before runtime readiness", () => {

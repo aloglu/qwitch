@@ -704,7 +704,7 @@ Item {
     var generation = String(Math.floor(_ownerGeneration))
     var code = "do local generation = " + generation + "; local current = tonumber(rawget(_G, '__qwitch_generation') or 0); "
       + "local cancelled = tonumber(rawget(_G, '__qwitch_cancelled_generation') or 0); "
-      + "if cancelled >= generation or generation < current then error('QWITCH_STALE') end; _G.__qwitch_generation = generation; "
+      + "if cancelled >= generation or generation < current then error('qwitch_stale') end; _G.__qwitch_generation = generation; "
       + "local owner = { token = " + token + ", phase = 'applying' }; "
       + "_G.__qwitch_layout_owner = owner; " + statements.join("; ")
       + "; owner.phase = 'active' end"
@@ -788,7 +788,7 @@ Item {
     var generation = String(Math.floor(_ownerGeneration))
     var code = "do local current = tonumber(rawget(_G, '__qwitch_generation') or 0); "
       + "local owner = rawget(_G, '__qwitch_layout_owner'); "
-      + "if current > " + generation + " or (owner and owner.token ~= " + token + ") then error('QWITCH_STALE') end; "
+      + "if current > " + generation + " or (owner and owner.token ~= " + token + ") then error('qwitch_stale') end; "
       + "if owner and owner.token == " + token + " then _G.__qwitch_layout_owner = nil end end"
     var preLease = currentLeaseState("layout-releasing", _mayOwnShortcut)
     var postLease = leaseState("layout-released", ({}), ({}), ({}), ({}), _mayOwnShortcut)
@@ -866,7 +866,7 @@ Item {
     var generation = String(Math.floor(_ownerGeneration))
     var code = "do local owner = rawget(_G, '__qwitch_layout_owner'); "
       + "local current = tonumber(rawget(_G, '__qwitch_generation') or 0); "
-      + "if current > " + generation + " or not owner or owner.token ~= " + token + " then error('QWITCH_STALE') end; "
+      + "if current > " + generation + " or not owner or owner.token ~= " + token + " then error('qwitch_stale') end; "
       + "owner.phase = 'restoring'; " + statements.join("; ")
       + " end"
     var postCode = Object.keys(keepBaselines).length > 0
@@ -902,7 +902,7 @@ Item {
       + "local cancelled = tonumber(rawget(_G, '__qwitch_cancelled_generation') or 0); "
       + "local owner = rawget(_G, '__qwitch_layout_owner'); "
       + "if cancelled >= " + generation + " or current > " + generation
-      + " or not owner or owner.token ~= " + token + " then error('QWITCH_STALE') end end"
+      + " or not owner or owner.token ~= " + token + " then error('qwitch_stale') end end"
   }
 
   function switchTo(index, showOsd) {
@@ -1115,12 +1115,12 @@ Item {
     var generation = String(Math.floor(_ownerGeneration))
     var code = "do local generation = " + generation + "; local current = tonumber(rawget(_G, '__qwitch_generation') or 0); "
       + "local cancelled = tonumber(rawget(_G, '__qwitch_cancelled_generation') or 0); "
-      + "if cancelled >= generation or generation < current then error('QWITCH_STALE') end; _G.__qwitch_generation = generation; "
+      + "if cancelled >= generation or generation < current then error('qwitch_stale') end; _G.__qwitch_generation = generation; "
       + "local old = rawget(_G, '__qwitch_owned_binding'); "
-      + "if old ~= nil and (type(old) ~= 'table' or old.token ~= " + token + ") then error('QWITCH_STALE') end; "
+      + "if old ~= nil and (type(old) ~= 'table' or old.token ~= " + token + ") then error('qwitch_stale') end; "
       + "local old_handle = type(old) == 'table' and old.handle or nil; "
       + "if old_handle then local ok, result = pcall(function() return old_handle:unbind() end); "
-      + "if not ok or result == false then error('QWITCH_UNBIND_FAILED') end end; "
+      + "if not ok or result == false then error('qwitch_unbind_failed') end end; "
       + "if rawget(_G, '__qwitch_owned_binding') == old then _G.__qwitch_owned_binding = nil end; "
       + "local candidate = hl.bind(" + Model.luaQuote(chord) + ", hl.dsp.exec_cmd(" + Model.luaQuote(command) + "), { description = 'qwitch: Next layout' }); "
       + "_G.__qwitch_owned_binding = { token = " + token + ", handle = candidate }; "
@@ -1148,7 +1148,7 @@ Item {
       + "if generation >= current then _G.__qwitch_generation = generation; local owned = rawget(_G, '__qwitch_owned_binding'); "
       + "if type(owned) == 'table' and owned.token == " + token + " then local handle = owned.handle; "
       + "if handle then local ok, result = pcall(function() return handle:unbind() end); "
-      + "if not ok or result == false then error('QWITCH_UNBIND_FAILED') end end; "
+      + "if not ok or result == false then error('qwitch_unbind_failed') end end; "
       + "if rawget(_G, '__qwitch_owned_binding') == owned then _G.__qwitch_owned_binding = nil end end end end"
     var preLease = currentLeaseState("binding-removing", true)
     var postLease = currentLeaseState("binding-removed", false)

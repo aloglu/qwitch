@@ -9,12 +9,12 @@ state_dir="$runtime_root/qwitch"
 lock_file="$runtime_root/qwitch-runtime.lock"
 lease_file="$state_dir/lease.json"
 resident_path="$state_dir/qwitch-runtime-v1"
-hyprctl_bin=${QWITCH_HYPRCTL:-/usr/bin/hyprctl}
-jq_bin=${QWITCH_JQ:-/usr/bin/jq}
-proc_input=${QWITCH_PROC_INPUT:-/proc/bus/input/devices}
+hyprctl_bin=${qwitch_hyprctl:-/usr/bin/hyprctl}
+jq_bin=${qwitch_jq:-/usr/bin/jq}
+proc_input=${qwitch_proc_input:-/proc/bus/input/devices}
 runtime_uid=$(/usr/bin/id -u)
-hypr_timeout_seconds=${QWITCH_HYPR_TIMEOUT_SECONDS:-5}
-lock_timeout_seconds=${QWITCH_LOCK_TIMEOUT_SECONDS:-15}
+hypr_timeout_seconds=${qwitch_hypr_timeout_seconds:-5}
+lock_timeout_seconds=${qwitch_lock_timeout_seconds:-15}
 
 if [[ ! $hypr_timeout_seconds =~ ^[1-9][0-9]*$ ]] || ((hypr_timeout_seconds > 30)); then
   printf 'qwitch-runtime: invalid Hyprland command timeout\n' >&2
@@ -164,7 +164,7 @@ run_eval() {
   if output=$(run_hyprctl eval "$1" 2>&1); then
     return 0
   fi
-  if [[ $output == *QWITCH_STALE* ]]; then
+  if [[ $output == *qwitch_stale* ]]; then
     return 75
   fi
   printf '%s\n' "$output" >&2
@@ -207,8 +207,8 @@ guardian_lock_file() {
 }
 
 test_mode_enabled() {
-  [[ ${QWITCH_TEST_MODE:-0} == 1 \
-    && -n ${QWITCH_HYPRCTL:-} \
+  [[ ${qwitch_test_mode:-0} == 1 \
+    && -n ${qwitch_hyprctl:-} \
     && $hyprctl_bin != /usr/bin/hyprctl \
     && $runtime_root == /tmp/qwitch-runtime-test.* ]]
 }
@@ -252,7 +252,7 @@ release_guardian_locked() {
 
 start_guardian() {
   local lease_id=${1:-} attempt nonce ack
-  if test_mode_enabled && [[ ${QWITCH_TEST_DISABLE_GUARDIAN:-0} == 1 ]]; then return 0; fi
+  if test_mode_enabled && [[ ${qwitch_test_disable_guardian:-0} == 1 ]]; then return 0; fi
   guardian_ready "$lease_id" && return 0
   ack=$(guardian_ack_file "$lease_id")
   rm -f "$ack"
@@ -663,13 +663,13 @@ cleanup_locked() {
   local keep_count code post_code
   keep_count=$("$jq_bin" -r 'length' <<<"$keep")
   code="do local generation = $generation; local current = tonumber(rawget(_G, '__qwitch_generation') or 0); "
-  code+="if current > generation then error('QWITCH_STALE') end; "
+  code+="if current > generation then error('qwitch_stale') end; "
   code+="local cancelled = tonumber(rawget(_G, '__qwitch_cancelled_generation') or 0); if generation > cancelled then _G.__qwitch_cancelled_generation = generation end; "
   if [[ $binding_owned == true ]]; then
-    code+="local binding = rawget(_G, '__qwitch_owned_binding'); if type(binding) == 'table' and binding.token == $token_q then local handle = binding.handle; if handle then local ok, result = pcall(function() return handle:unbind() end); if not ok or result == false then error('QWITCH_UNBIND_FAILED') end end; if rawget(_G, '__qwitch_owned_binding') == binding then _G.__qwitch_owned_binding = nil end end; "
+    code+="local binding = rawget(_G, '__qwitch_owned_binding'); if type(binding) == 'table' and binding.token == $token_q then local handle = binding.handle; if handle then local ok, result = pcall(function() return handle:unbind() end); if not ok or result == false then error('qwitch_unbind_failed') end end; if rawget(_G, '__qwitch_owned_binding') == binding then _G.__qwitch_owned_binding = nil end end; "
   fi
   if ((device_count > 0)); then
-    code+="local owner = rawget(_G, '__qwitch_layout_owner'); if not owner or owner.token ~= $token_q then error('QWITCH_STALE') end; owner.phase = 'watchdog-restoring'; $statements; "
+    code+="local owner = rawget(_G, '__qwitch_layout_owner'); if not owner or owner.token ~= $token_q then error('qwitch_stale') end; owner.phase = 'watchdog-restoring'; $statements; "
   fi
   code+="end"
   post_code="do local owner = rawget(_G, '__qwitch_layout_owner'); if owner and owner.token == $token_q then "
@@ -705,11 +705,11 @@ guardian_loop() {
   local last_heartbeat="" missed_heartbeats=0
   [[ $expected_id =~ ^[A-Za-z0-9._-]+$ && $nonce =~ ^arm-[A-Za-z0-9._-]+$ ]] || return 2
   if test_mode_enabled; then
-    if [[ ${QWITCH_TEST_GUARDIAN_POLL_SECONDS:-} =~ ^(0\.[0-9]+|[1-9][0-9]*(\.[0-9]+)?)$ ]]; then
-      poll_seconds=${QWITCH_TEST_GUARDIAN_POLL_SECONDS}
+    if [[ ${qwitch_test_guardian_poll_seconds:-} =~ ^(0\.[0-9]+|[1-9][0-9]*(\.[0-9]+)?)$ ]]; then
+      poll_seconds=${qwitch_test_guardian_poll_seconds}
     fi
-    if [[ ${QWITCH_TEST_GUARDIAN_COLLISION_SECONDS:-} =~ ^(0\.[0-9]+|[1-9][0-9]*(\.[0-9]+)?)$ ]]; then
-      collision_seconds=${QWITCH_TEST_GUARDIAN_COLLISION_SECONDS}
+    if [[ ${qwitch_test_guardian_collision_seconds:-} =~ ^(0\.[0-9]+|[1-9][0-9]*(\.[0-9]+)?)$ ]]; then
+      collision_seconds=${qwitch_test_guardian_collision_seconds}
     fi
   fi
   guard=$(guardian_lock_file "$expected_id")

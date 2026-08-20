@@ -97,4 +97,4 @@ and targets Omarchy 4.0's Quattro shell contract.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Released under the [MIT License](LICENSE).

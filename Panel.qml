@@ -334,7 +334,9 @@ Panel {
   function deviceOverrideValue(device) {
     var fingerprint = deviceFingerprint(device)
     var overrides = objectFrom(root.draft.deviceOverrides)
-    var explicitValue = String(overrides[fingerprint] || (device && device.override) || "auto")
+    // The draft is authoritative while settings are open. In particular,
+    // removing a saved override must render as Auto before Save is pressed.
+    var explicitValue = String(overrides[fingerprint] || "auto")
     return ["auto", "manage", "ignore"].indexOf(explicitValue) === -1 ? "auto" : explicitValue
   }
 

@@ -340,6 +340,20 @@ test("resident guardian retires safely after checkout deletion and can be re-arm
   assert.equal(waitFor(() => !fs.existsSync(ackPath)), true)
 })
 
+test("bootstrap replaces a stale resident helper with the bundled version", () => {
+  const ctx = setup()
+  const stateDir = path.join(ctx.root, "qwitch")
+  const resident = path.join(stateDir, "qwitch-runtime-v1")
+  fs.mkdirSync(stateDir, { mode: 0o700 })
+  fs.writeFileSync(resident, "#!/usr/bin/env bash\nexit 99\n", { mode: 0o700 })
+
+  const bootstrap = run(ctx, ["bootstrap"])
+  assert.equal(bootstrap.status, 0, bootstrap.stderr)
+  assert.equal(bootstrap.stdout.trim(), resident)
+  assert.deepEqual(fs.readFileSync(resident), fs.readFileSync(helper))
+  assert.equal(fs.statSync(resident).mode & 0o777, 0o700)
+})
+
 test("corrupt lease and symlinked runtime directory fail closed", () => {
   const ctx = setup()
   fs.mkdirSync(path.join(ctx.root, "qwitch"), { mode: 0o700 })

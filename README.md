@@ -35,6 +35,11 @@ omarchy plugin add "file://$HOME/workspaces/Qwitch"
 omarchy plugin enable io.github.aloglu.qwitch
 ```
 
+The local URL is still installed with `git clone`, so it contains committed
+`HEAD`, not uncommitted working-tree changes. Commit before adding it. If you
+amend or otherwise rewrite a revision that is already installed, remove and
+re-add the plugin; Omarchy plugin updates are fast-forward-only.
+
 Qwitch does not force a bar position. Place or move it with Omarchy's normal bar
 customization tools, then click the widget to switch layouts or right-click it
 to open settings.

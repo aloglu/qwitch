@@ -6,6 +6,7 @@ const test = require("node:test")
 const servicePath = path.join(__dirname, "..", "Service.qml")
 const service = fs.readFileSync(servicePath, "utf8")
 const panel = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
+const barWidget = fs.readFileSync(path.join(__dirname, "..", "BarWidget.qml"), "utf8")
 
 test("runtime mutations use the resident pre/post lease contract", () => {
   assert.match(service, /_residentRuntimeHelper/)
@@ -90,4 +91,16 @@ test("settings focus and manual XKB edits fail safely", () => {
   assert.match(panel, /settingsScroll\.forceActiveFocus\(\)/)
   assert.match(panel, /Model\.normalizeLayoutEntry\(entry\)/)
   assert.match(panel, /not available on this system/)
+})
+
+test("device override draft can visibly return a saved override to automatic", () => {
+  assert.match(panel, /var explicitValue = String\(overrides\[fingerprint\] \|\| "auto"\)/)
+  assert.doesNotMatch(panel, /overrides\[fingerprint\] \|\| \(device && device\.override\)/)
+  assert.match(panel, /if \(value === "manage" \|\| value === "ignore"\) overrides\[fingerprint\] = value/)
+})
+
+test("bar settings synchronization cannot outlive its widget", () => {
+  assert.match(barWidget, /id: settingsSyncTimer/)
+  assert.match(barWidget, /Component\.onDestruction:[\s\S]*settingsSyncTimer\.stop\(\)/)
+  assert.doesNotMatch(barWidget, /Qt\.callLater/)
 })

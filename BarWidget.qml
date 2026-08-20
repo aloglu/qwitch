@@ -24,6 +24,12 @@ BarWidget {
 
   property var lastSyncedService: null
   property string lastSyncedSettings: ""
+  property bool componentAlive: false
+
+  function scheduleServiceSync() {
+    if (!root.componentAlive) return
+    settingsSyncTimer.restart()
+  }
 
   function arrayFrom(value) {
     if (!value || typeof value === "string" || typeof value.length !== "number") return []
@@ -158,16 +164,32 @@ BarWidget {
 
   onBarChanged: {
     injectPanel()
-    Qt.callLater(root.syncServiceSettings)
+    scheduleServiceSync()
   }
-  onSettingsChanged: Qt.callLater(root.syncServiceSettings)
+  onSettingsChanged: scheduleServiceSync()
   onServiceChanged: {
     root.lastSyncedService = null
     root.lastSyncedSettings = ""
     injectPanel()
-    Qt.callLater(root.syncServiceSettings)
+    scheduleServiceSync()
   }
-  Component.onCompleted: Qt.callLater(root.syncServiceSettings)
+  Component.onCompleted: {
+    root.componentAlive = true
+    root.scheduleServiceSync()
+  }
+  Component.onDestruction: {
+    root.componentAlive = false
+    settingsSyncTimer.stop()
+  }
+
+  Timer {
+    id: settingsSyncTimer
+    interval: 0
+    repeat: false
+    onTriggered: {
+      if (root.componentAlive) root.syncServiceSettings()
+    }
+  }
 
   Loader {
     id: panelLoader
@@ -176,7 +198,6 @@ BarWidget {
     visible: false
     onLoaded: {
       root.injectPanel()
-      Qt.callLater(root.injectPanel)
     }
   }
 

@@ -212,11 +212,12 @@ BarWidget {
     active: root.opened
     tooltipText: root.service && root.service.mixedState === true
       ? "qwitch: layouts differ across keyboards"
-      : "qwitch — click to switch, right-click for settings"
+      : "qwitch — left-click to switch, right-click for layouts"
 
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) root.openSettings()
-      else if (buttonCode === Qt.LeftButton) root.toggle()
+      if (buttonCode === Qt.RightButton) root.toggle()
+      else if (buttonCode === Qt.LeftButton && root.service
+          && typeof root.service.cycleNext === "function") root.service.cycleNext()
     }
   }
 }

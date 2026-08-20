@@ -139,3 +139,18 @@ test("bar settings synchronization cannot outlive its widget", () => {
   assert.match(barWidget, /Component\.onDestruction:[\s\S]*settingsSyncTimer\.stop\(\)/)
   assert.doesNotMatch(barWidget, /Qt\.callLater/)
 })
+
+test("bar clicks cycle layouts and reserve the menu for right click", () => {
+  assert.match(barWidget, /buttonCode === Qt\.RightButton\) root\.toggle\(\)/)
+  assert.match(barWidget, /buttonCode === Qt\.LeftButton[\s\S]*root\.service\.cycleNext\(\)/)
+  assert.doesNotMatch(barWidget, /Qt\.RightButton\) root\.openSettings\(\)/)
+})
+
+test("panel headers and mixed control rows use compact aligned geometry", () => {
+  assert.doesNotMatch(panel, /PanelHero\s*\{/)
+  assert.match(panel, /id: mainTitle[\s\S]*anchors\.right: settingsButton\.left/)
+  assert.match(panel, /id: osdSwitch[\s\S]*trackHeight: Style\.space\(18\)/)
+  assert.match(panel, /id: shortcutField[\s\S]*height: parent\.height/)
+  assert.match(panel, /id: moveUpButton[\s\S]*anchors\.verticalCenter: parent\.verticalCenter/)
+  assert.equal((panel.match(/width: \(parent\.width - parent\.spacing\) \/ 2/g) || []).length, 4)
+})

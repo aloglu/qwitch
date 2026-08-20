@@ -46,8 +46,8 @@ amend or otherwise rewrite a revision that is already installed, remove and
 re-add the plugin; Omarchy plugin updates are fast-forward-only.
 
 qwitch does not force a bar position. Place or move it with Omarchy's normal bar
-customization tools, then click the widget to switch layouts or right-click it
-to open settings.
+customization tools. Left-click the widget to switch to the next layout;
+right-click it to open the layout menu, whose gear opens settings.
 
 Remove it with:
 

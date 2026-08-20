@@ -113,13 +113,6 @@ Panel {
   })
   readonly property var visibleDevices: root.advancedDevicesVisible
     ? root.typingDevices.concat(root.advancedDevices) : root.typingDevices
-  readonly property string heroTitle: {
-    if (root.service && root.service.mixedState === true) return "Mixed layouts"
-    var rendered = root.displayFor(root.service ? root.service.activeLayout : null,
-      root.settings ? root.settings.displayMode : "both")
-    return rendered || "Keyboard layouts"
-  }
-
   function prepareDraft() {
     root.draftReady = false
     var source = objectFrom(root.settings)
@@ -585,17 +578,21 @@ Panel {
         width: parent.width
         spacing: Style.space(10)
 
-        Row {
+        Item {
           width: parent.width
-          spacing: Style.space(8)
+          height: Math.max(mainTitle.implicitHeight, settingsButton.implicitHeight)
 
-          PanelHero {
-            width: Math.max(0, parent.width - settingsButton.implicitWidth - parent.spacing)
-            title: "󰌌  " + root.heroTitle
-            meta: root.service && root.service.busy === true ? "qwitch · switching" : "qwitch"
-            detail: root.selectorLayouts.length > 0 ? String(root.selectorLayouts.length) : ""
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+          Text {
+            id: mainTitle
+            anchors.left: parent.left
+            anchors.right: settingsButton.left
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Keyboard layouts"
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
           }
 
           PanelActionButton {
@@ -605,16 +602,13 @@ Panel {
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             focusable: true
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
             onClicked: root.openSettings()
           }
         }
 
         PanelSeparator { foreground: root.contentForeground }
-        PanelSectionHeader {
-          text: "Keyboard layouts"
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-        }
 
         Text {
           visible: root.selectorLayouts.length === 0
@@ -713,12 +707,28 @@ Panel {
           width: settingsScroll.width
           spacing: Style.space(10)
 
-          PanelHero {
+          Column {
             width: parent.width
-            title: "󰌌  qwitch settings"
-            meta: root.saveStatus || "Changes save automatically"
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            spacing: Style.space(2)
+
+            Text {
+              width: parent.width
+              text: "qwitch settings"
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              text: (root.saveStatus || "Changes save automatically").toUpperCase()
+              color: Qt.darker(root.contentForeground, 1.4)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+            }
           }
 
           PanelSeparator { foreground: root.contentForeground }
@@ -738,14 +748,16 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          Row {
+          Item {
             width: parent.width
-            spacing: Style.space(6)
+            height: Style.spacing.controlHeight
 
             SearchableDropdown {
               id: catalogDropdown
-              width: Math.max(Style.space(220), parent.width
-                - refreshCatalogButton.implicitWidth - parent.spacing)
+              anchors.left: parent.left
+              anchors.right: refreshCatalogButton.left
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
               showLabel: false
               options: root.catalogOptions
               value: root.selectedCatalogValue
@@ -770,6 +782,8 @@ Panel {
               foreground: root.contentForeground
               fontFamily: root.contentFontFamily
               focusable: true
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
               enabled: !(root.service && root.service.catalogLoading === true)
               onClicked: if (root.service && typeof root.service.refreshCatalog === "function")
                 root.service.refreshCatalog()
@@ -800,16 +814,18 @@ Panel {
           Repeater {
             model: root.draftLayouts
 
-            delegate: Row {
+            delegate: Item {
               required property var modelData
               required property int index
               width: settingsColumn.width
-              spacing: Style.space(4)
+              height: Style.spacing.controlHeight
 
               Button {
-                width: Math.max(Style.space(140), parent.width
-                  - moveUpButton.implicitWidth - moveDownButton.implicitWidth
-                  - removeButton.implicitWidth - parent.spacing * 3)
+                anchors.left: parent.left
+                anchors.right: moveUpButton.left
+                anchors.rightMargin: Style.space(4)
+                anchors.verticalCenter: parent.verticalCenter
+                height: parent.height
                 text: root.displayFor(modelData, "both")
                   + (String(modelData.variant || "") ? " · " + String(modelData.variant) : "")
                 leftAlign: true
@@ -830,6 +846,9 @@ Panel {
                 fontFamily: root.contentFontFamily
                 focusable: true
                 enabled: index > 0
+                anchors.right: moveDownButton.left
+                anchors.rightMargin: Style.space(4)
+                anchors.verticalCenter: parent.verticalCenter
                 onClicked: root.moveLayout(index, -1)
               }
 
@@ -841,6 +860,9 @@ Panel {
                 fontFamily: root.contentFontFamily
                 focusable: true
                 enabled: index < root.draftLayouts.length - 1
+                anchors.right: removeButton.left
+                anchors.rightMargin: Style.space(4)
+                anchors.verticalCenter: parent.verticalCenter
                 onClicked: root.moveLayout(index, 1)
               }
 
@@ -852,6 +874,8 @@ Panel {
                 hoverColor: root.contentUrgent
                 fontFamily: root.contentFontFamily
                 focusable: true
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 onClicked: root.removeLayout(index)
               }
             }
@@ -938,7 +962,7 @@ Panel {
               spacing: Style.space(8)
 
               Column {
-                width: (parent.width - parent.spacing) * 0.65
+                width: (parent.width - parent.spacing) / 2
                 spacing: Style.space(3)
                 Text {
                   text: "Short label  󰋼"
@@ -965,7 +989,7 @@ Panel {
               }
 
               Column {
-                width: (parent.width - parent.spacing) * 0.35
+                width: (parent.width - parent.spacing) / 2
                 spacing: Style.space(3)
                 Text {
                   text: "Flag emoji  󰋼"
@@ -1001,28 +1025,54 @@ Panel {
             fontSize: Style.font.body
           }
 
-          ButtonGroup {
-            options: [
-              { value: "text", label: "Text" },
-              { value: "flag", label: "Flag" },
-              { value: "both", label: "Both" }
-            ]
-            value: String(root.draft.displayMode || "both")
-            foreground: root.contentForeground
-            accent: root.contentAccent
-            fontFamily: root.contentFontFamily
-            onChanged: function(value) { root.setDraftValue("displayMode", value) }
-          }
-
-          Toggle {
+          Item {
             width: parent.width
-            label: "Show layout changes on the OSD"
-            description: "Uses the same text, flag, or combined display selected above."
-            checked: root.draft.osdEnabled === true
-            foreground: root.contentForeground
-            accent: root.contentAccent
-            fontFamily: root.contentFontFamily
-            onClicked: root.setDraftValue("osdEnabled", !root.draft.osdEnabled)
+            height: Math.max(displayModeGroup.implicitHeight, osdSwitch.implicitHeight)
+
+            ButtonGroup {
+              id: displayModeGroup
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              options: [
+                { value: "text", label: "Text" },
+                { value: "flag", label: "Flag" },
+                { value: "both", label: "Both" }
+              ]
+              value: String(root.draft.displayMode || "both")
+              foreground: root.contentForeground
+              accent: root.contentAccent
+              fontFamily: root.contentFontFamily
+              onChanged: function(value) { root.setDraftValue("displayMode", value) }
+            }
+
+            Text {
+              id: osdLabel
+              anchors.right: osdSwitch.left
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+              text: "OSD  󰋼"
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.body
+              HoverHandler { id: osdHelp }
+              PanelToolTip {
+                visible: osdHelp.hovered
+                text: "Show the selected layout through Omarchy’s on-screen display."
+                fontFamily: root.contentFontFamily
+              }
+            }
+
+            ToggleSwitch {
+              id: osdSwitch
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              checked: root.draft.osdEnabled === true
+              trackHeight: Style.space(18)
+              cursorRing: false
+              foreground: root.contentForeground
+              accent: root.contentAccent
+              onToggled: root.setDraftValue("osdEnabled", !root.draft.osdEnabled)
+            }
           }
 
           PanelSeparator { foreground: root.contentForeground }
@@ -1045,14 +1095,17 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          Row {
+          Item {
             width: parent.width
-            spacing: Style.space(6)
+            height: Style.spacing.controlHeight
 
             TextField {
               id: shortcutField
-              width: Math.max(Style.space(180), parent.width - recordShortcutButton.implicitWidth
-                - clearShortcutButton.implicitWidth - parent.spacing * 2)
+              anchors.left: parent.left
+              anchors.right: recordShortcutButton.left
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+              height: parent.height
               readOnly: true
               text: root.capturingShortcut
                 ? "Press a key combination…" : root.shortcutSummary(root.draft.shortcut)
@@ -1071,6 +1124,10 @@ Panel {
               foreground: root.contentForeground
               accent: root.contentAccent
               fontFamily: root.contentFontFamily
+              height: parent.height
+              anchors.right: clearShortcutButton.left
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
               onClicked: {
                 root.capturingShortcut = !root.capturingShortcut
                 root.shortcutError = ""
@@ -1087,6 +1144,8 @@ Panel {
               hoverColor: root.contentUrgent
               fontFamily: root.contentFontFamily
               focusable: true
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
               enabled: root.draft.shortcut !== null && root.draft.shortcut !== undefined
               onClicked: {
                 root.capturingShortcut = false

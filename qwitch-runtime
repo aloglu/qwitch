@@ -4,7 +4,7 @@ set -u
 
 umask 077
 
-runtime_root=${XDG_RUNTIME_DIR:?Qwitch requires XDG_RUNTIME_DIR}
+runtime_root=${XDG_RUNTIME_DIR:?qwitch requires XDG_RUNTIME_DIR}
 state_dir="$runtime_root/qwitch"
 lock_file="$runtime_root/qwitch-runtime.lock"
 lease_file="$state_dir/lease.json"
@@ -629,7 +629,7 @@ cleanup_locked() {
     if ((count == 1)); then
       if ! proc_identity_matches "$name" "$record"; then
         # A present device that merely reuses the Hyprland name is not the
-        # device whose baseline Qwitch owns. Keep the obligation without
+        # device whose baseline qwitch owns. Keep the obligation without
         # touching the replacement.
         keep=$("$jq_bin" -c --argjson record "$record" '. + [$record]' <<<"$keep")
         continue

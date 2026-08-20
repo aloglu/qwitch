@@ -4,7 +4,7 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Qwitch's nested panel has two deliberately small surfaces:
+// qwitch's nested panel has two deliberately small surfaces:
 //   * the default layout picker
 //   * an explicit settings editor opened by right-click or the gear button
 // Runtime discovery and switching remain in Service.qml. This panel edits an
@@ -197,7 +197,7 @@ Panel {
 
   function chooseLayout(index) {
     if (!root.service || typeof root.service.switchTo !== "function") {
-      root.draftError = "Qwitch service is not available."
+      root.draftError = "qwitch service is not available."
       return
     }
     if (index < 0 || index >= root.selectorLayouts.length) return
@@ -458,7 +458,7 @@ Panel {
     var maximumLayouts = root.service && Number(root.service.maximumLayouts) > 0
       ? Number(root.service.maximumLayouts) : 16
     if (layouts.length > maximumLayouts)
-      return "Qwitch supports at most " + maximumLayouts + " layouts."
+      return "qwitch supports at most " + maximumLayouts + " layouts."
     if (layouts.length === 0 && root.draft.shortcut)
       return "Add a layout before assigning a shortcut."
     var seen = ({})
@@ -488,7 +488,7 @@ Panel {
       return
     }
     if (!root.hostWidget || typeof root.hostWidget.persistSettings !== "function") {
-      root.draftError = "The Qwitch bar widget is not available to save settings."
+      root.draftError = "The qwitch bar widget is not available to save settings."
       return
     }
 
@@ -555,7 +555,7 @@ Panel {
           PanelHero {
             width: Math.max(0, parent.width - settingsButton.implicitWidth - parent.spacing)
             title: "󰌌  " + root.heroTitle
-            meta: root.service && root.service.busy === true ? "Qwitch · switching" : "Qwitch"
+            meta: root.service && root.service.busy === true ? "qwitch · switching" : "qwitch"
             detail: root.selectorLayouts.length > 0 ? String(root.selectorLayouts.length) : ""
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
@@ -564,7 +564,7 @@ Panel {
           PanelActionButton {
             id: settingsButton
             iconText: "󰒓"
-            tooltipText: "Qwitch settings"
+            tooltipText: "qwitch settings"
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             focusable: true
@@ -593,7 +593,7 @@ Panel {
           visible: root.selectorLayouts.length > 0
             && root.service && root.service.configuredLayouts.length === 0
           width: parent.width
-          text: "Observed from Hyprland. Save it in Qwitch settings before switching."
+          text: "Observed from Hyprland. Save it in qwitch settings before switching."
           color: Qt.darker(root.contentForeground, 1.4)
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
@@ -678,7 +678,7 @@ Panel {
 
           PanelHero {
             width: parent.width
-            title: "󰌌  Qwitch settings"
+            title: "󰌌  qwitch settings"
             meta: "Changes apply only when saved"
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
@@ -751,7 +751,7 @@ Panel {
           Text {
             visible: root.draftLayouts.length === 0
             width: parent.width
-            text: "No saved layouts leaves Qwitch observation-only."
+            text: "No saved layouts leaves qwitch observation-only."
             color: Qt.darker(root.contentForeground, 1.4)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.body

@@ -585,7 +585,7 @@ Item {
   }
 
   function runtimeLayoutLimitError() {
-    return "Qwitch supports at most " + _maximumRuntimeLayouts + " layouts"
+    return "qwitch supports at most " + _maximumRuntimeLayouts + " layouts"
   }
 
   function configuredLayoutSpec() {
@@ -824,8 +824,8 @@ Item {
         current ? current.active_layout_index : undefined
       ]
       // Compare-and-restore: leave a device alone if somebody changed it after
-      // Qwitch's last successful write. If it is unplugged, restore the owned
-      // name-specific rule so Qwitch's layout does not return with the device.
+      // qwitch's last successful write. If it is unplugged, restore the owned
+      // name-specific rule so qwitch's layout does not return with the device.
       if (current && !matchesOwnedLayout(fingerprint, current)) continue
       if (!current && !applied) continue
       var deviceName = current ? current.name : (applied.name || baseline.name)
@@ -907,11 +907,11 @@ Item {
 
   function switchTo(index, showOsd) {
     if (_superseded) {
-      lastError = "A newer Qwitch service owns the runtime state"
+      lastError = "A newer qwitch service owns the runtime state"
       return false
     }
     if (!_runtimeReady) {
-      lastError = "Qwitch is restoring runtime state from an earlier service"
+      lastError = "qwitch is restoring runtime state from an earlier service"
       return false
     }
     if (configuredLayouts.length > _maximumRuntimeLayouts) {
@@ -928,7 +928,7 @@ Item {
       return false
     }
     if (_rebaseAfterReload) {
-      lastError = "Qwitch is refreshing after a Hyprland reload"
+      lastError = "qwitch is refreshing after a Hyprland reload"
       return false
     }
     if (managedDevices.length === 0) {
@@ -936,7 +936,7 @@ Item {
       return false
     }
     if (needsLayoutApply()) {
-      lastError = "Qwitch is synchronizing keyboard layouts"
+      lastError = "qwitch is synchronizing keyboard layouts"
       reconcileRuntimeLayouts()
       return false
     }
@@ -1058,7 +1058,7 @@ Item {
   function ownBinding(bind) {
     var description = String(bind && bind.description ? bind.description : "")
     var arg = String(bind && bind.arg ? bind.arg : "")
-    return description === "Qwitch: Next layout"
+    return description.toLowerCase() === "qwitch: next layout"
       && arg.indexOf("omarchy-shell -q qwitch nextLayout") !== -1
   }
 
@@ -1122,7 +1122,7 @@ Item {
       + "if old_handle then local ok, result = pcall(function() return old_handle:unbind() end); "
       + "if not ok or result == false then error('QWITCH_UNBIND_FAILED') end end; "
       + "if rawget(_G, '__qwitch_owned_binding') == old then _G.__qwitch_owned_binding = nil end; "
-      + "local candidate = hl.bind(" + Model.luaQuote(chord) + ", hl.dsp.exec_cmd(" + Model.luaQuote(command) + "), { description = 'Qwitch: Next layout' }); "
+      + "local candidate = hl.bind(" + Model.luaQuote(chord) + ", hl.dsp.exec_cmd(" + Model.luaQuote(command) + "), { description = 'qwitch: Next layout' }); "
       + "_G.__qwitch_owned_binding = { token = " + token + ", handle = candidate }; "
       + "end"
     _pendingShortcut = shortcut
@@ -1175,7 +1175,7 @@ Item {
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: if (text) root.lastError = String(text).trim() }
     onExited: function(exitCode) {
       if (exitCode !== 0) {
-        root.lastError = root.lastError || "Qwitch could not prepare its temporary runtime helper"
+        root.lastError = root.lastError || "qwitch could not prepare its temporary runtime helper"
         return
       }
       root.beginDrain()
@@ -1201,7 +1201,7 @@ Item {
         drainRetry.restart()
         return
       }
-      root.lastError = root.lastError || "Qwitch could not safely drain earlier runtime state"
+      root.lastError = root.lastError || "qwitch could not safely drain earlier runtime state"
     }
   }
 
@@ -1214,7 +1214,7 @@ Item {
         return
       }
       if (exitCode !== 0) {
-        root.lastError = root.lastError || "Qwitch could not safely rebase after the Hyprland reload"
+        root.lastError = root.lastError || "qwitch could not safely rebase after the Hyprland reload"
         if (exitCode !== 78) reloadAbandonRetry.restart()
         return
       }
@@ -1262,9 +1262,9 @@ Item {
     onExited: function(exitCode) {
       if (exitCode === 75) root.markSuperseded()
       else if (exitCode !== 0 && exitCode !== 78)
-        root.lastError = "Qwitch could not renew its runtime cleanup lease"
+        root.lastError = "qwitch could not renew its runtime cleanup lease"
       else if (exitCode === 78)
-        root.lastError = "Qwitch found an unsafe or corrupt runtime cleanup lease"
+        root.lastError = "qwitch found an unsafe or corrupt runtime cleanup lease"
     }
   }
 
@@ -1449,7 +1449,7 @@ Item {
           root._mayOwnShortcut = false
           root.shortcutConflict = root._pendingBindingError
         }
-      } else root.shortcutConflict = root._actionError || "Could not register the Qwitch shortcut"
+      } else root.shortcutConflict = root._actionError || "Could not register the qwitch shortcut"
       root._bindingOperation = ""
       root._pendingBindingError = ""
       if (exitCode === 0) root.updateLeasePresence()

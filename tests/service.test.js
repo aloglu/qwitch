@@ -3,10 +3,25 @@ const fs = require("node:fs")
 const path = require("node:path")
 const test = require("node:test")
 
-const servicePath = path.join(__dirname, "..", "Service.qml")
+const projectRoot = path.join(__dirname, "..")
+const servicePath = path.join(projectRoot, "Service.qml")
 const service = fs.readFileSync(servicePath, "utf8")
-const panel = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
-const barWidget = fs.readFileSync(path.join(__dirname, "..", "BarWidget.qml"), "utf8")
+const panel = fs.readFileSync(path.join(projectRoot, "Panel.qml"), "utf8")
+const barWidget = fs.readFileSync(path.join(projectRoot, "BarWidget.qml"), "utf8")
+
+test("project branding consistently uses lowercase qwitch", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"))
+  assert.equal(manifest.name, "qwitch")
+  assert.equal(manifest.barWidget.displayName, "qwitch")
+
+  for (const filename of [
+    "BarWidget.qml", "Model.js", "Panel.qml", "README.md", "Service.qml",
+    "manifest.json", "qwitch-runtime"
+  ]) {
+    const contents = fs.readFileSync(path.join(projectRoot, filename), "utf8")
+    assert.doesNotMatch(contents, /\bQwitch\b/, `${filename} contains capitalized branding`)
+  }
+})
 
 test("runtime mutations use the resident pre/post lease contract", () => {
   assert.match(service, /_residentRuntimeHelper/)

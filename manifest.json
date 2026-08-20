@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "io.github.aloglu.qwitch",
-  "name": "Qwitch",
+  "name": "qwitch",
   "version": "1.0.0",
   "author": "Abdullah Aloğlu",
   "license": "MIT",
@@ -15,8 +15,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Qwitch",
-    "description": "Switch keyboard layouts and configure Qwitch from the bar.",
+    "displayName": "qwitch",
+    "description": "Switch keyboard layouts and configure qwitch from the bar.",
     "category": "Input",
     "allowMultiple": false,
     "defaults": {

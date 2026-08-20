@@ -2,7 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Ui
 
-// Qwitch's per-monitor bar surface. Runtime state belongs to Service.qml;
+// qwitch's per-monitor bar surface. Runtime state belongs to Service.qml;
 // this component only renders it, persists inline settings, and hosts the
 // one nested panel used by both pointer and shell lifecycle calls.
 BarWidget {
@@ -209,8 +209,8 @@ BarWidget {
     hasVisualContent: text !== ""
     active: root.opened
     tooltipText: root.service && root.service.mixedState === true
-      ? "Qwitch: layouts differ across keyboards"
-      : "Qwitch — click to switch, right-click for settings"
+      ? "qwitch: layouts differ across keyboards"
+      : "qwitch — click to switch, right-click for settings"
 
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.openSettings()

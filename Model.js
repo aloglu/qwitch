@@ -1,5 +1,5 @@
 /*
- * Qwitch model helpers.
+ * qwitch model helpers.
  *
  * This file deliberately has no Qt imports so it can be used both from QML
  * (`import "Model.js" as Model`) and from the Node test suite.

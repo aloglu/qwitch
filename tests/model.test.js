@@ -204,6 +204,24 @@ test('sanitizes settings without inventing a default layout', () => {
   assert.deepEqual(Model.sanitizeSettings(null), second);
 });
 
+test('reads native Hyprland XKB options and labels common group toggles', () => {
+  assert.equal(Model.parseHyprOptionString('{"str":"caps:escape,grp:alt_shift_toggle"}'),
+    'caps:escape,grp:alt_shift_toggle');
+  assert.equal(Model.parseHyprOptionString('not json'), '');
+  assert.equal(Model.firstGroupToggle('caps:escape,grp:alt_shift_toggle'), 'grp:alt_shift_toggle');
+  assert.equal(Model.nativeXkbShortcutLabel('grp:alt_shift_toggle'), 'Alt + Shift');
+  assert.equal(Model.nativeXkbShortcutLabel('grp:win_space_toggle'), 'Super + Space');
+  assert.equal(Model.firstGroupToggle('caps:escape'), '');
+
+  const adopted = Model.sanitizeSettings({
+    adoptedExistingConfig: true,
+    nativeXkbOption: 'grp:ctrl_shift_toggle',
+  });
+  assert.equal(adopted.adoptedExistingConfig, true);
+  assert.equal(adopted.nativeXkbOption, 'grp:ctrl_shift_toggle');
+  assert.equal(Model.sanitizeSettings({ nativeXkbOption: 'compose:ralt' }).nativeXkbOption, '');
+});
+
 test('formats text, flags and fallbacks without leaving an empty widget', () => {
   const entry = { layout: 'us', variant: '', label: 'EN', flag: '🇺🇸' };
   assert.equal(Model.displayForLayout(entry, 'text'), 'EN');

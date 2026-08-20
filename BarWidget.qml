@@ -50,6 +50,8 @@ BarWidget {
     if (out.shortcut === undefined) out.shortcut = null
     if (!out.deviceOverrides || typeof out.deviceOverrides !== "object"
         || typeof out.deviceOverrides.length === "number") out.deviceOverrides = ({})
+    out.adoptedExistingConfig = out.adoptedExistingConfig === true
+    out.nativeXkbOption = String(out.nativeXkbOption || "")
     return out
   }
 

@@ -6,17 +6,22 @@ layout and shortcut changes in the running Hyprland session.
 
 ## Features
 
-- Add, edit, remove, and order XKB layouts from the bar panel.
+- Add, edit, remove, and order XKB layouts from the bar panel; valid changes
+  save automatically through Omarchy's shell configuration API.
 - Switch every safely managed typing keyboard from the panel or an optional
   recorded shortcut.
 - Show a label, Unicode flag, or both in the bar.
 - Optionally show the same representation through Omarchy's OSD.
-- Review every detected keyboard-like input and override its automatic policy.
+- See actual typing keyboards by default, with rejected keyboard-like devices
+  available in a compact advanced section for diagnosis and overrides.
 - Keep security tokens, OTP/FIDO devices, virtual keyboards, consumer-control
   nodes, pointers, and ambiguous devices unmanaged by default.
 
-qwitch is observation-only until you explicitly save at least one layout. It
-does not edit `~/.config/hypr` or install a persistent Hyprland keybinding.
+On first enable, qwitch adopts a coherent layout list already active in
+Hyprland and records any native `grp:*_toggle` XKB shortcut it finds. It does
+not edit `~/.config/hypr` or install a persistent Hyprland keybinding. While it
+is running, it also removes Omarchy's simpler `omarchy.keyboard-layout` widget
+from the bar through the shell's native configuration API.
 
 ## Install
 
@@ -74,14 +79,16 @@ device layouts and its exact shortcut handle; all of this state disappears with
 the user session. Once a cleanup lease settles, its watchdog exits; the private
 resident helper and lock may remain available until that user session ends.
 
-Saving settings writes only the qwitch fields in Omarchy's normal
+Changing settings writes only the qwitch fields in Omarchy's normal
 `~/.config/omarchy/shell.json` bar entry. Runtime device layouts are restored on
 normal plugin shutdown using compare-and-restore semantics, so a device changed
 by another tool after qwitch's last write is left alone.
 
-Automatic device detection is intentionally conservative. A security token can
-be forced into the managed set only after an explicit warning; doing so can
-interfere with OTP or FIDO input and is not recommended.
+Automatic device detection is intentionally conservative. The regular settings
+view contains only high-confidence typing keyboards. Security tokens, virtual
+inputs, controls, pointers, and ambiguous interfaces stay in Advanced devices;
+a security token can be forced into the managed set only after an explicit
+warning.
 
 ## Development
 

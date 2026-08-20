@@ -98,10 +98,19 @@ test("destruction retires the exact resident lease", () => {
   assert.doesNotMatch(service, /detachedRuntimeCommand/)
 })
 
-test("first run remains observation-only", () => {
-  assert.match(service, /configuredLayouts\.length === 0/)
-  assert.match(service, /This is deliberately observation-only/)
-  assert.match(service, /if \(configuredLayouts\.length === 0\) \{/)
+test("first run adopts existing Hyprland layouts and the native group toggle", () => {
+  assert.match(service, /function maybeAdoptExistingConfig\(\)/)
+  assert.match(service, /candidate\.layouts = importingLayouts \? clone\(layouts, \[\]\) : clone\(configuredLayouts, \[\]\)/)
+  assert.match(service, /candidate\.adoptedExistingConfig = true/)
+  assert.match(service, /Model\.firstGroupToggle\(Model\.parseHyprOptionString/)
+  assert.match(service, /"input:kb_options"/)
+  assert.match(service, /shell\.updateEntryInline\("io\.github\.aloglu\.qwitch", candidate\)/)
+})
+
+test("running qwitch removes Omarchy's duplicate layout indicator natively", () => {
+  assert.match(service, /function integrateWithOmarchyBar\(\)/)
+  assert.match(service, /shell\.mutateShellConfig/)
+  assert.match(service, /omarchy\.keyboard-layout/)
 })
 
 test("settings focus and manual XKB edits fail safely", () => {
@@ -109,6 +118,14 @@ test("settings focus and manual XKB edits fail safely", () => {
   assert.match(panel, /settingsScroll\.forceActiveFocus\(\)/)
   assert.match(panel, /Model\.normalizeLayoutEntry\(entry\)/)
   assert.match(panel, /not available on this system/)
+})
+
+test("settings auto-save and layout selection adds immediately", () => {
+  assert.match(panel, /id: autoSaveTimer/)
+  assert.match(panel, /onTriggered: root\.saveSettings\(\)/)
+  assert.match(panel, /root\.addSelectedCatalogLayout\(\)/)
+  assert.doesNotMatch(panel, /text: .*"Save"/)
+  assert.match(panel, /model: root\.visibleDevices/)
 })
 
 test("device override draft can visibly return a saved override to automatic", () => {

@@ -19,6 +19,8 @@ Item {
 
   property var devices: []
   readonly property var managedDevices: devices.filter(function(device) { return device.managed === true })
+  readonly property var typingDevices: devices.filter(function(device) { return device.category === "keyboard" })
+  readonly property string nativeShortcutLabel: Model.nativeXkbShortcutLabel(settings.nativeXkbOption)
   property int activeIndex: -1
   property bool mixedState: false
   readonly property var activeLayout: activeIndex >= 0 && activeIndex < layouts.length ? layouts[activeIndex] : null
@@ -42,6 +44,10 @@ Item {
   property string _procInputOutput: ""
   property string _devicesOutput: ""
   property string _bindsOutput: ""
+  property string _nativeOptionOutput: ""
+  property bool _nativeOptionReady: false
+  property bool _settingsReceived: false
+  property bool _adoptionAttempted: false
   property var _knownBinds: []
   property bool _bindSnapshotReady: false
   property string _actionError: ""
@@ -274,14 +280,71 @@ Item {
 
   function setSettings(value) {
     if (_superseded) return
+    _settingsReceived = true
     var next = Model.sanitizeSettings(value)
     var signature = JSON.stringify(next)
     if (busy) {
       _queuedSettings = signature === _settingsSignature ? null : next
       return
     }
-    if (signature === _settingsSignature) return
-    applySettings(next)
+    if (signature !== _settingsSignature) applySettings(next)
+    maybeAdoptExistingConfig()
+  }
+
+  // Use Omarchy's in-process shell config API to avoid showing two keyboard
+  // indicators while qwitch is enabled. The mutation is idempotent.
+  function integrateWithOmarchyBar() {
+    if (!shell || typeof shell.mutateShellConfig !== "function") return
+    var sections = ["left", "center", "right"]
+    var found = false
+    var config = shell.shellConfig
+    if (config && config.bar && config.bar.layout) {
+      for (var i = 0; i < sections.length; i++) {
+        var entries = config.bar.layout[sections[i]]
+        if (!Array.isArray(entries)) continue
+        for (var j = 0; j < entries.length; j++) {
+          var entry = entries[j]
+          var id = typeof entry === "string" ? entry : String(entry && entry.id || "")
+          if (id === "omarchy.keyboard-layout") found = true
+        }
+      }
+    }
+    if (!found) return
+    shell.mutateShellConfig(function(next) {
+      if (!next.bar || !next.bar.layout) return
+      for (var s = 0; s < sections.length; s++) {
+        var values = next.bar.layout[sections[s]]
+        if (!Array.isArray(values)) continue
+        next.bar.layout[sections[s]] = values.filter(function(entry) {
+          var id = typeof entry === "string" ? entry : String(entry && entry.id || "")
+          return id !== "omarchy.keyboard-layout"
+        })
+      }
+    })
+  }
+
+  // A fresh qwitch entry adopts the coherent layout list already active in
+  // Hyprland. The marker prevents an intentional later removal from being
+  // mistaken for another first run.
+  function maybeAdoptExistingConfig() {
+    if (_adoptionAttempted || !_settingsReceived || !_nativeOptionReady) return
+    if (settings.adoptedExistingConfig === true) {
+      _adoptionAttempted = true
+      return
+    }
+    var importingLayouts = configuredLayouts.length === 0
+    if (importingLayouts && (layouts.length === 0 || managedDevices.length === 0)) return
+
+    _adoptionAttempted = true
+    var candidate = clone(settings, Model.defaultSettings())
+    candidate.layouts = importingLayouts ? clone(layouts, []) : clone(configuredLayouts, [])
+    candidate.adoptedExistingConfig = true
+    candidate.nativeXkbOption = Model.firstGroupToggle(Model.parseHyprOptionString(_nativeOptionOutput))
+    applySettings(Model.sanitizeSettings(candidate), true)
+    if (importingLayouts) _reconcilePending = true
+    if (shell && typeof shell.updateEntryInline === "function")
+      shell.updateEntryInline("io.github.aloglu.qwitch", candidate)
+    Qt.callLater(root.finishMutation)
   }
 
   function applySettings(next, deferRuntime) {
@@ -389,8 +452,8 @@ Item {
       return
     }
 
-    // With no saved settings, reflect one unambiguous existing device without
-    // taking ownership of it. This is deliberately observation-only.
+    // Before first-run adoption completes, reflect one unambiguous existing
+    // device without taking ownership of it.
     var candidates = managedDevices
     if (candidates.length === 0) {
       layouts = []
@@ -490,6 +553,7 @@ Item {
         requiresConfirmation: verdict.requiresConfirmation === true,
         category: String(verdict.category || ""),
         reason: String(verdict.reason || ""),
+        source: String(verdict.source || "automatic"),
         override: override || "auto",
         identity: input ? {
           inputName: String(input.name || ""),
@@ -504,6 +568,7 @@ Item {
 
     devices = next
     recomputeLayouts()
+    maybeAdoptExistingConfig()
     if (_runtimeAwaitingFreshDevices && _activeDeviceRefreshSerial > _runtimeReadyAfterSerial) {
       _runtimeAwaitingFreshDevices = false
       _runtimeReadyAfterSerial = -1
@@ -924,7 +989,7 @@ Item {
       return false
     }
     if (configuredLayouts.length === 0) {
-      lastError = "Save at least one layout before switching"
+      lastError = "Add at least one layout before switching"
       return false
     }
     if (_rebaseAfterReload) {
@@ -1284,6 +1349,16 @@ Item {
   }
 
   Process {
+    id: nativeOptionProcess
+    command: ["hyprctl", "-j", "getoption", "input:kb_options"]
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root._nativeOptionOutput = text }
+    onExited: function() {
+      root._nativeOptionReady = true
+      root.maybeAdoptExistingConfig()
+    }
+  }
+
+  Process {
     id: procInputProcess
     command: ["cat", "/proc/bus/input/devices"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root._procInputOutput = text }
@@ -1551,6 +1626,12 @@ Item {
     bootstrapProcess.running = true
     refreshCatalog()
     refreshDevices()
+    nativeOptionProcess.running = true
+  }
+
+  onShellChanged: {
+    integrateWithOmarchyBar()
+    maybeAdoptExistingConfig()
   }
 
   Component.onDestruction: retireLease()

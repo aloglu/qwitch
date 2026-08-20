@@ -7,8 +7,9 @@ import "Model.js" as Model
 // qwitch's nested panel has two deliberately small surfaces:
 //   * the default layout picker
 //   * an explicit settings editor opened by right-click or the gear button
-// Runtime discovery and switching remain in Service.qml. This panel edits an
-// isolated draft and asks BarWidget.qml to persist it only when Save is used.
+// Runtime discovery and switching remain in Service.qml. Settings are kept in
+// a local editing value and persisted through Omarchy's native shell API after
+// each valid change.
 Panel {
   id: root
   moduleName: "io.github.aloglu.qwitch"
@@ -33,12 +34,16 @@ Panel {
   property string shortcutError: ""
   property string saveStatus: ""
   property var pendingSecurityDevice: null
+  property bool draftReady: false
+  property bool advancedDevicesVisible: false
   property var draft: ({
     layouts: [],
     displayMode: "both",
     osdEnabled: false,
     shortcut: null,
-    deviceOverrides: ({})
+    deviceOverrides: ({}),
+    adoptedExistingConfig: false,
+    nativeXkbOption: ""
   })
 
   function arrayFrom(value) {
@@ -100,6 +105,14 @@ Panel {
 
   readonly property var draftLayouts: root.arrayFrom(root.draft ? root.draft.layouts : [])
   readonly property var detectedDevices: root.service ? root.arrayFrom(root.service.devices) : []
+  readonly property var typingDevices: root.detectedDevices.filter(function(device) {
+    return String(device.category || "") === "keyboard"
+  })
+  readonly property var advancedDevices: root.detectedDevices.filter(function(device) {
+    return String(device.category || "") !== "keyboard"
+  })
+  readonly property var visibleDevices: root.advancedDevicesVisible
+    ? root.typingDevices.concat(root.advancedDevices) : root.typingDevices
   readonly property string heroTitle: {
     if (root.service && root.service.mixedState === true) return "Mixed layouts"
     var rendered = root.displayFor(root.service ? root.service.activeLayout : null,
@@ -108,12 +121,11 @@ Panel {
   }
 
   function prepareDraft() {
+    root.draftReady = false
     var source = objectFrom(root.settings)
     var layouts = arrayFrom(source.layouts)
 
-    // On first enable the service may expose an unambiguous compositor layout
-    // without persisting it. Seed the editor from that observation only; the
-    // shell entry changes solely after the user presses Save.
+    // Seed from the live service if shell propagation is still catching up.
     if (layouts.length === 0 && root.service) layouts = arrayFrom(root.service.layouts)
 
     var normalized = []
@@ -126,7 +138,9 @@ Panel {
       displayMode: mode,
       osdEnabled: source.osdEnabled === true,
       shortcut: clone(source.shortcut, null),
-      deviceOverrides: clone(objectFrom(source.deviceOverrides), ({}))
+      deviceOverrides: clone(objectFrom(source.deviceOverrides), ({})),
+      adoptedExistingConfig: source.adoptedExistingConfig === true,
+      nativeXkbOption: String(source.nativeXkbOption || "")
     }
     root.editingLayoutIndex = normalized.length > 0 ? 0 : -1
     root.selectedCatalogValue = ""
@@ -135,6 +149,8 @@ Panel {
     root.draftError = ""
     root.shortcutError = ""
     root.saveStatus = ""
+    root.advancedDevicesVisible = false
+    root.draftReady = true
     if (root.service && typeof root.service.refreshCatalog === "function") root.service.refreshCatalog()
     if (root.service && typeof root.service.refreshDevices === "function") root.service.refreshDevices()
   }
@@ -176,6 +192,10 @@ Panel {
   }
 
   function cancelSettings() {
+    if (autoSaveTimer.running) {
+      autoSaveTimer.stop()
+      root.saveSettings()
+    }
     root.capturingShortcut = false
     root.pendingSecurityDevice = null
     root.settingsPage = false
@@ -216,11 +236,14 @@ Panel {
       displayMode: String(root.draft.displayMode || "both"),
       osdEnabled: root.draft.osdEnabled === true,
       shortcut: clone(root.draft.shortcut, null),
-      deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({}))
+      deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
+      adoptedExistingConfig: root.draft.adoptedExistingConfig === true,
+      nativeXkbOption: String(root.draft.nativeXkbOption || "")
     }
     root.editingLayoutIndex = selectedIndex
     root.draftError = ""
     root.saveStatus = ""
+    root.scheduleAutoSave()
   }
 
   function updateLayout(index, field, value) {
@@ -319,6 +342,11 @@ Panel {
     root.draft = next
     root.draftError = ""
     root.saveStatus = ""
+    root.scheduleAutoSave()
+  }
+
+  function scheduleAutoSave() {
+    if (root.draftReady) autoSaveTimer.restart()
   }
 
   function deviceFingerprint(device) {
@@ -335,7 +363,7 @@ Panel {
     var fingerprint = deviceFingerprint(device)
     var overrides = objectFrom(root.draft.deviceOverrides)
     // The draft is authoritative while settings are open. In particular,
-    // removing a saved override must render as Auto before Save is pressed.
+    // removing a saved override must render as Auto before the debounce fires.
     var explicitValue = String(overrides[fingerprint] || "auto")
     return ["auto", "manage", "ignore"].indexOf(explicitValue) === -1 ? "auto" : explicitValue
   }
@@ -502,14 +530,23 @@ Panel {
       displayMode: String(root.draft.displayMode || "both"),
       osdEnabled: root.draft.osdEnabled === true,
       shortcut: clone(root.draft.shortcut, null),
-      deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({}))
+      deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
+      adoptedExistingConfig: true,
+      nativeXkbOption: String(root.draft.nativeXkbOption || "")
     }
 
     root.hostWidget.persistSettings(candidate)
     root.draft = clone(candidate, candidate)
     root.draftError = ""
     root.shortcutError = ""
-    root.saveStatus = "Settings saved."
+    root.saveStatus = "Saved automatically"
+  }
+
+  Timer {
+    id: autoSaveTimer
+    interval: 450
+    repeat: false
+    onTriggered: root.saveSettings()
   }
 
   onServiceChanged: {
@@ -523,7 +560,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: root.settingsPage ? settingsScroll : keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(540))
+    contentWidth: panel.fittedContentWidth(root.settingsPage ? Style.space(430) : Style.space(320))
     contentHeight: panel.fittedContentHeight(
       root.settingsPage ? Style.space(650) : selectorPage.implicitHeight,
       Style.space(720))
@@ -593,7 +630,7 @@ Panel {
           visible: root.selectorLayouts.length > 0
             && root.service && root.service.configuredLayouts.length === 0
           width: parent.width
-          text: "Observed from Hyprland. Save it in qwitch settings before switching."
+          text: "Adopting the active Hyprland layouts…"
           color: Qt.darker(root.contentForeground, 1.4)
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
@@ -679,16 +716,26 @@ Panel {
           PanelHero {
             width: parent.width
             title: "󰌌  qwitch settings"
-            meta: "Changes apply only when saved"
+            meta: root.saveStatus || "Changes save automatically"
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
           }
 
           PanelSeparator { foreground: root.contentForeground }
           PanelSectionHeader {
-            text: "Layouts"
-            foreground: root.contentForeground
+            text: "󰌌  LAYOUTS"
+            foreground: root.contentAccent
             fontFamily: root.contentFontFamily
+            fontSize: Style.font.body
+          }
+
+          Text {
+            width: parent.width
+            text: "Choose a layout to add it immediately. Drag-free arrows control switch order."
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
 
           Row {
@@ -697,8 +744,8 @@ Panel {
 
             SearchableDropdown {
               id: catalogDropdown
-              width: Math.max(Style.space(220), parent.width - addLayoutButton.implicitWidth
-                - refreshCatalogButton.implicitWidth - parent.spacing * 2)
+              width: Math.max(Style.space(220), parent.width
+                - refreshCatalogButton.implicitWidth - parent.spacing)
               showLabel: false
               options: root.catalogOptions
               value: root.selectedCatalogValue
@@ -710,7 +757,10 @@ Panel {
               foreground: root.contentForeground
               accent: root.contentAccent
               fontFamily: root.contentFontFamily
-              onChanged: function(value) { root.selectedCatalogValue = value }
+              onChanged: function(value) {
+                root.selectedCatalogValue = value
+                root.addSelectedCatalogLayout()
+              }
             }
 
             PanelActionButton {
@@ -725,17 +775,6 @@ Panel {
                 root.service.refreshCatalog()
             }
 
-            Button {
-              id: addLayoutButton
-              text: "Add"
-              bordered: true
-              focusable: true
-              enabled: root.selectedCatalogValue !== ""
-              foreground: root.contentForeground
-              accent: root.contentAccent
-              fontFamily: root.contentFontFamily
-              onClicked: root.addSelectedCatalogLayout()
-            }
           }
 
           Text {
@@ -751,7 +790,7 @@ Panel {
           Text {
             visible: root.draftLayouts.length === 0
             width: parent.width
-            text: "No saved layouts leaves qwitch observation-only."
+            text: "No layouts configured. Choose one above to enable switching."
             color: Qt.darker(root.contentForeground, 1.4)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.body
@@ -843,10 +882,16 @@ Panel {
                 width: (parent.width - parent.spacing) / 2
                 spacing: Style.space(3)
                 Text {
-                  text: "XKB layout"
+                  text: "Layout code  󰋼"
                   color: Qt.darker(root.contentForeground, 1.4)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.caption
+                  HoverHandler { id: layoutCodeHelp }
+                  PanelToolTip {
+                    visible: layoutCodeHelp.hovered
+                    text: "The XKB code, such as us, tr, de, or gb."
+                    fontFamily: root.contentFontFamily
+                  }
                 }
                 TextField {
                   width: parent.width
@@ -855,6 +900,7 @@ Panel {
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
+                  activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "layout", text)
                 }
               }
@@ -863,10 +909,16 @@ Panel {
                 width: (parent.width - parent.spacing) / 2
                 spacing: Style.space(3)
                 Text {
-                  text: "Variant"
+                  text: "Variant  󰋼"
                   color: Qt.darker(root.contentForeground, 1.4)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.caption
+                  HoverHandler { id: variantHelp }
+                  PanelToolTip {
+                    visible: variantHelp.hovered
+                    text: "An optional XKB variation, such as intl or nodeadkeys."
+                    fontFamily: root.contentFontFamily
+                  }
                 }
                 TextField {
                   width: parent.width
@@ -875,6 +927,7 @@ Panel {
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
+                  activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "variant", text)
                 }
               }
@@ -888,10 +941,16 @@ Panel {
                 width: (parent.width - parent.spacing) * 0.65
                 spacing: Style.space(3)
                 Text {
-                  text: "Bar label"
+                  text: "Short label  󰋼"
                   color: Qt.darker(root.contentForeground, 1.4)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.caption
+                  HoverHandler { id: shortLabelHelp }
+                  PanelToolTip {
+                    visible: shortLabelHelp.hovered
+                    text: "The compact name shown in the bar, for example EN or TR."
+                    fontFamily: root.contentFontFamily
+                  }
                 }
                 TextField {
                   width: parent.width
@@ -900,6 +959,7 @@ Panel {
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
+                  activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "label", text)
                 }
               }
@@ -908,10 +968,16 @@ Panel {
                 width: (parent.width - parent.spacing) * 0.35
                 spacing: Style.space(3)
                 Text {
-                  text: "Flag"
+                  text: "Flag emoji  󰋼"
                   color: Qt.darker(root.contentForeground, 1.4)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.caption
+                  HoverHandler { id: flagHelp }
+                  PanelToolTip {
+                    visible: flagHelp.hovered
+                    text: "Optional. Used when the display mode includes a flag."
+                    fontFamily: root.contentFontFamily
+                  }
                 }
                 TextField {
                   width: parent.width
@@ -920,6 +986,7 @@ Panel {
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
+                  activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "flag", text)
                 }
               }
@@ -928,9 +995,10 @@ Panel {
 
           PanelSeparator { foreground: root.contentForeground }
           PanelSectionHeader {
-            text: "Display"
-            foreground: root.contentForeground
+            text: "󰍹  APPEARANCE"
+            foreground: root.contentAccent
             fontFamily: root.contentFontFamily
+            fontSize: Style.font.body
           }
 
           ButtonGroup {
@@ -959,9 +1027,22 @@ Panel {
 
           PanelSeparator { foreground: root.contentForeground }
           PanelSectionHeader {
-            text: "Shortcut"
-            foreground: root.contentForeground
+            text: "󰌌  SWITCHING SHORTCUT"
+            foreground: root.contentAccent
             fontFamily: root.contentFontFamily
+            fontSize: Style.font.body
+          }
+
+          Text {
+            visible: String(root.draft.nativeXkbOption || "") !== ""
+            width: parent.width
+            text: "Using Hyprland’s existing XKB shortcut: "
+              + (root.service ? String(root.service.nativeShortcutLabel || root.draft.nativeXkbOption)
+                : String(root.draft.nativeXkbOption))
+            color: Qt.darker(root.contentForeground, 1.25)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
 
           Row {
@@ -1043,9 +1124,10 @@ Panel {
 
             PanelSectionHeader {
               width: Math.max(0, parent.width - refreshDevicesButton.implicitWidth - parent.spacing)
-              text: "Input devices"
-              foreground: root.contentForeground
+              text: "󰌓  KEYBOARDS"
+              foreground: root.contentAccent
               fontFamily: root.contentFontFamily
+              fontSize: Style.font.body
             }
 
             PanelActionButton {
@@ -1061,17 +1143,43 @@ Panel {
           }
 
           Text {
-            visible: root.detectedDevices.length === 0
+            visible: root.typingDevices.length === 0
             width: parent.width
-            text: "No keyboard-like devices were detected."
+            text: "No high-confidence typing keyboard was detected. Open advanced devices to inspect what Hyprland reported."
             color: Qt.darker(root.contentForeground, 1.4)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.body
             wrapMode: Text.WordWrap
           }
 
+          Text {
+            visible: root.typingDevices.length > 0
+            width: parent.width
+            text: "qwitch manages " + root.typingDevices.length
+              + (root.typingDevices.length === 1 ? " typing keyboard automatically." : " typing keyboards automatically.")
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Button {
+            visible: root.advancedDevices.length > 0
+            width: parent.width
+            text: (root.advancedDevicesVisible ? "Hide" : "Show") + " advanced devices ("
+              + root.advancedDevices.length + ")"
+            iconText: root.advancedDevicesVisible ? "󰅃" : "󰅀"
+            leftAlign: true
+            bordered: true
+            focusable: true
+            foreground: root.contentForeground
+            accent: root.contentAccent
+            fontFamily: root.contentFontFamily
+            onClicked: root.advancedDevicesVisible = !root.advancedDevicesVisible
+          }
+
           Repeater {
-            model: root.detectedDevices
+            model: root.visibleDevices
 
             delegate: Column {
               required property var modelData
@@ -1149,7 +1257,7 @@ Panel {
               }
 
               PanelSeparator {
-                visible: index < root.detectedDevices.length - 1
+                visible: index < root.visibleDevices.length - 1
                 foreground: root.contentForeground
               }
             }
@@ -1184,32 +1292,17 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
-          Row {
+          Button {
             width: parent.width
-            spacing: Style.space(8)
-
-            Button {
-              width: (parent.width - parent.spacing) / 2
-              text: "Cancel"
-              bordered: true
-              focusable: true
-              foreground: root.contentForeground
-              accent: root.contentAccent
-              fontFamily: root.contentFontFamily
-              onClicked: root.cancelSettings()
-            }
-
-            Button {
-              width: (parent.width - parent.spacing) / 2
-              text: root.service && root.service.busy === true ? "Applying…" : "Save"
-              bordered: true
-              focusable: true
-              enabled: !(root.service && root.service.busy === true)
-              foreground: root.contentForeground
-              accent: root.contentAccent
-              fontFamily: root.contentFontFamily
-              onClicked: root.saveSettings()
-            }
+            text: "Back to layouts"
+            iconText: "󰁍"
+            leftAlign: true
+            bordered: true
+            focusable: true
+            foreground: root.contentForeground
+            accent: root.contentAccent
+            fontFamily: root.contentFontFamily
+            onClicked: root.cancelSettings()
           }
         }
       }

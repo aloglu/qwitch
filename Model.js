@@ -636,8 +636,55 @@ function defaultSettings() {
         displayMode: "both",
         osdEnabled: false,
         shortcut: null,
-        deviceOverrides: {}
+        deviceOverrides: {},
+        adoptedExistingConfig: false,
+        nativeXkbOption: ""
     };
+}
+
+function sanitizeNativeXkbOption(value) {
+    var option = cleanText(value, 128);
+    return /^grp:[a-z0-9_]+_toggle$/.test(option) ? option : "";
+}
+
+function nativeXkbShortcutLabel(value) {
+    var labels = {
+        "grp:alt_shift_toggle": "Alt + Shift",
+        "grp:lalt_lshift_toggle": "Left Alt + Left Shift",
+        "grp:ralt_rshift_toggle": "Right Alt + Right Shift",
+        "grp:ctrl_shift_toggle": "Ctrl + Shift",
+        "grp:lctrl_lshift_toggle": "Left Ctrl + Left Shift",
+        "grp:rctrl_rshift_toggle": "Right Ctrl + Right Shift",
+        "grp:win_space_toggle": "Super + Space",
+        "grp:alt_space_toggle": "Alt + Space",
+        "grp:ctrl_space_toggle": "Ctrl + Space",
+        "grp:shift_caps_toggle": "Shift + Caps Lock",
+        "grp:menu_toggle": "Menu",
+        "grp:caps_toggle": "Caps Lock",
+        "grp:lwin_toggle": "Left Super",
+        "grp:rwin_toggle": "Right Super"
+    };
+    var option = sanitizeNativeXkbOption(value);
+    return labels[option] || (option ? option.replace(/^grp:/, "").replace(/_toggle$/, "").replace(/_/g, " + ") : "");
+}
+
+function parseHyprOptionString(text) {
+    try {
+        var parsed = JSON.parse(String(text || ""));
+        return cleanText(parsed && parsed.str, 512);
+    } catch (error) {
+        return "";
+    }
+}
+
+function firstGroupToggle(value) {
+    var options = String(value || "").split(",");
+    for (var index = 0; index < options.length; index += 1) {
+        var option = sanitizeNativeXkbOption(options[index]);
+        if (option)
+            return option;
+    }
+    return "";
 }
 
 function sanitizeOverrides(value) {
@@ -666,6 +713,8 @@ function sanitizeSettings(value) {
     if (source.shortcut && validateShortcut(source.shortcut) === "")
         result.shortcut = normalizeShortcut(source.shortcut);
     result.deviceOverrides = sanitizeOverrides(source.deviceOverrides);
+    result.adoptedExistingConfig = source.adoptedExistingConfig === true;
+    result.nativeXkbOption = sanitizeNativeXkbOption(source.nativeXkbOption);
     return result;
 }
 
@@ -978,7 +1027,10 @@ var exported = {
     normalizeDeviceName: normalizeDeviceName,
     matchInputDevice: matchInputDevice,
     stableDeviceFingerprint: stableDeviceFingerprint,
-    classifyDevice: classifyDevice
+    classifyDevice: classifyDevice,
+    parseHyprOptionString: parseHyprOptionString,
+    firstGroupToggle: firstGroupToggle,
+    nativeXkbShortcutLabel: nativeXkbShortcutLabel
 };
 
 if (typeof module !== "undefined" && module.exports)

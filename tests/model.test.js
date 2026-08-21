@@ -204,6 +204,38 @@ test('sanitizes settings without inventing a default layout', () => {
   assert.deepEqual(Model.sanitizeSettings(null), second);
 });
 
+test('sanitizes and resolves per-application layout memory', () => {
+  const layouts = [
+    { layout: 'us', variant: '', label: 'EN', flag: '' },
+    { layout: 'tr', variant: 'f', label: 'TR', flag: '' },
+  ];
+  const usKey = Model.layoutKey(layouts[0]);
+  const trKey = Model.layoutKey(layouts[1]);
+  const clean = Model.sanitizeSettings({
+    layouts,
+    applicationMode: 'remember',
+    applicationLayouts: {
+      'Org.Alacritty': usKey,
+      firefox: trKey,
+      stale: 'de\u0000',
+      '__proto__': trKey,
+    },
+  });
+
+  assert.equal(clean.applicationMode, 'remember');
+  assert.deepEqual(clean.applicationLayouts, {
+    'org.alacritty': usKey,
+    firefox: trKey,
+  });
+  assert.equal(Model.applicationLayoutIndex(clean.applicationLayouts,
+    'ORG.ALACRITTY', clean.layouts), 0);
+  assert.equal(Model.applicationLayoutIndex(clean.applicationLayouts,
+    'firefox', clean.layouts), 1);
+  assert.equal(Model.applicationLayoutIndex(clean.applicationLayouts,
+    'unknown', clean.layouts), -1);
+  assert.equal(Model.sanitizeSettings({ applicationMode: 'automatic' }).applicationMode, 'global');
+});
+
 test('reads native Hyprland XKB options and labels common group toggles', () => {
   assert.equal(Model.parseHyprOptionString('{"str":"caps:escape,grp:alt_shift_toggle"}'),
     'caps:escape,grp:alt_shift_toggle');

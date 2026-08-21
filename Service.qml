@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
+import Quickshell.Wayland
 import "Model.js" as Model
 
 Item {
@@ -35,6 +36,7 @@ Item {
     || !_runtimeReady || _layoutPipeline || _rebaseAfterReload
   property string lastError: ""
   property string shortcutConflict: ""
+  property string activeApplicationId: ""
   // Presentation preferences are safe to accept while the runtime service is
   // still draining its previous lease. Keeping them outside the mutation
   // queue makes the persisted OSD choice effective immediately after boot.
@@ -90,6 +92,8 @@ Item {
   property string _layoutOperation: ""
   property int _targetAfterApply: 0
   property bool _showOsdAfterSwitch: false
+  property bool _rememberApplicationAfterSwitch: false
+  property string _switchApplicationId: ""
   property bool _showOsdAfterExternalRefresh: false
   property int _externalRefreshPreviousIndex: -1
   property bool _externalRefreshPreviousMixed: false
@@ -115,6 +119,49 @@ Item {
 
   function clone(value, fallback) {
     try { return JSON.parse(JSON.stringify(value)) } catch (error) { return fallback }
+  }
+
+  function applicationIdFor(toplevel) {
+    if (!toplevel) return ""
+    return Model.normalizeApplicationId(toplevel.appId || "")
+  }
+
+  function refreshActiveApplication() {
+    activeApplicationId = applicationIdFor(ToplevelManager.activeToplevel)
+    if (settings.applicationMode === "remember" && activeApplicationId)
+      applicationLayoutTimer.restart()
+  }
+
+  function rememberApplicationLayout(index, applicationId) {
+    var application = Model.normalizeApplicationId(applicationId || activeApplicationId)
+    if (settings.applicationMode !== "remember" || !application) return
+    var target = Number(index)
+    if (!Number.isInteger(target) || target < 0 || target >= layouts.length) return
+    var remembered = clone(settings.applicationLayouts, {})
+    var key = Model.layoutKey(layouts[target])
+    if (!key || remembered[application] === key) return
+    var applications = Object.keys(remembered)
+    if (remembered[application] === undefined && applications.length >= 128)
+      delete remembered[applications[0]]
+    remembered[application] = key
+    var candidate = clone(settings, Model.defaultSettings())
+    candidate.applicationLayouts = remembered
+    candidate = Model.sanitizeSettings(candidate)
+    applySettings(candidate, true)
+    if (shell && typeof shell.updateEntryInline === "function")
+      shell.updateEntryInline("io.github.aloglu.qwitch", candidate)
+  }
+
+  function applyRememberedApplicationLayout() {
+    if (settings.applicationMode !== "remember" || !activeApplicationId) return
+    if (busy) {
+      applicationLayoutTimer.restart()
+      return
+    }
+    var target = Model.applicationLayoutIndex(settings.applicationLayouts,
+      activeApplicationId, layouts)
+    if (target < 0 || target === activeIndex) return
+    switchTo(target, false, false)
   }
 
   function resetOwnerIdentity(minimumGeneration) {
@@ -272,6 +319,9 @@ Item {
     _restoreAfterRefresh = false
     _restorePolicyAfterRefresh = false
     _switchAfterRefresh = -1
+    _rememberApplicationAfterSwitch = false
+    _switchApplicationId = ""
+    applicationLayoutTimer.stop()
     _queuedSettings = null
     _layoutOperation = ""
     _bindingOperation = ""
@@ -375,6 +425,9 @@ Item {
     var previousLayouts = JSON.stringify(configuredLayouts)
     var previousOverrides = JSON.stringify(settings && settings.deviceOverrides ? settings.deviceOverrides : {})
     var previousShortcut = JSON.stringify(settings && settings.shortcut ? settings.shortcut : null)
+    var previousApplicationMode = String(settings && settings.applicationMode || "global")
+    var previousApplicationLayouts = JSON.stringify(
+      settings && settings.applicationLayouts ? settings.applicationLayouts : {})
     settings = next
     osdEnabled = next.osdEnabled === true
     osdDisplayMode = String(next.displayMode || "both")
@@ -385,10 +438,13 @@ Item {
     var overridesChanged = JSON.stringify(next.deviceOverrides || {}) !== previousOverrides
     var layoutsChanged = JSON.stringify(configuredLayouts) !== previousLayouts
     var shortcutChanged = JSON.stringify(next.shortcut || null) !== previousShortcut
+    var applicationBehaviorChanged = String(next.applicationMode || "global") !== previousApplicationMode
+      || JSON.stringify(next.applicationLayouts || {}) !== previousApplicationLayouts
     if (deferRuntime === true) {
       if (overridesChanged && Object.keys(_lastApplied).length > 0)
         _restorePolicyAfterRefresh = true
       if (shortcutChanged) _bindRefreshPending = true
+      if (applicationBehaviorChanged) applicationLayoutTimer.restart()
       return
     }
     if (overridesChanged && Object.keys(_lastApplied).length > 0) {
@@ -397,6 +453,7 @@ Item {
       reconcileRuntimeLayouts()
     }
     if (shortcutChanged) refreshBinds()
+    if (applicationBehaviorChanged) applicationLayoutTimer.restart()
   }
 
   function finishMutation() {
@@ -610,7 +667,10 @@ Item {
     // Native XKB group toggles change Hyprland directly rather than entering
     // switchTo(). Once the refreshed state is known, route those changes
     // through the same native Omarchy OSD used by qwitch-owned shortcuts.
-    if (showExternalOsd) Qt.callLater(root.showLayoutOsd)
+    if (showExternalOsd) {
+      root.rememberApplicationLayout(root.activeIndex)
+      Qt.callLater(root.showLayoutOsd)
+    }
 
     if (_superseded) return
 
@@ -640,7 +700,7 @@ Item {
       var switchTarget = _switchAfterRefresh
       _switchAfterRefresh = -1
       Qt.callLater(function() {
-        if (!root.switchTo(switchTarget, false)) {
+        if (!root.switchTo(switchTarget, false, false)) {
           root._layoutPipeline = false
           root._reconcilePending = true
           root.finishMutation()
@@ -1004,7 +1064,7 @@ Item {
       + " or not owner or owner.token ~= " + token + " then error('qwitch_stale') end end"
   }
 
-  function switchTo(index, showOsd) {
+  function switchTo(index, showOsd, rememberApplication) {
     if (_superseded) {
       lastError = "A newer qwitch service owns the runtime state"
       return false
@@ -1062,6 +1122,8 @@ Item {
     _switchTarget = target
     _switchPrevious = previous
     _showOsdAfterSwitch = showOsd !== false
+    _rememberApplicationAfterSwitch = rememberApplication !== false
+    _switchApplicationId = _rememberApplicationAfterSwitch ? activeApplicationId : ""
     _layoutPipeline = true
     _actionError = ""
     var leaseIndexes = ({})
@@ -1264,7 +1326,10 @@ Item {
       devices: devices,
       busy: busy,
       error: lastError,
-      shortcutConflict: shortcutConflict
+      shortcutConflict: shortcutConflict,
+      applicationMode: String(settings.applicationMode || "global"),
+      activeApplicationId: activeApplicationId,
+      rememberedApplications: Object.keys(settings.applicationLayouts || {}).length
     })
   }
 
@@ -1481,6 +1546,10 @@ Item {
       if (exitCode === 0) {
         root.lastError = ""
         root.updateDevicesAfterSwitch(root._switchTarget)
+        if (root._rememberApplicationAfterSwitch)
+          root.rememberApplicationLayout(root._switchTarget, root._switchApplicationId)
+        root._rememberApplicationAfterSwitch = false
+        root._switchApplicationId = ""
         if (root._showOsdAfterSwitch) root.showLayoutOsd()
         root._layoutPipeline = false
         root.refreshDevices()
@@ -1489,6 +1558,8 @@ Item {
       }
 
       root.lastError = root._actionError || "Could not switch every managed keyboard"
+      root._rememberApplicationAfterSwitch = false
+      root._switchApplicationId = ""
       var rollback = root.switchBatch(root._switchPrevious)
       if (rollback) {
         var rollbackApplied = root.appliedAtIndexes(root._switchPrevious)
@@ -1600,10 +1671,27 @@ Item {
     }
   }
 
+  Connections {
+    target: ToplevelManager
+    function onActiveToplevelChanged() { root.refreshActiveApplication() }
+  }
+
+  Connections {
+    target: ToplevelManager.activeToplevel
+    ignoreUnknownSignals: true
+    function onAppIdChanged() { root.refreshActiveApplication() }
+  }
+
   Timer {
     id: refreshTimer
     interval: 250
     onTriggered: root.refreshDevices()
+  }
+
+  Timer {
+    id: applicationLayoutTimer
+    interval: 120
+    onTriggered: root.applyRememberedApplicationLayout()
   }
 
   Timer {
@@ -1671,6 +1759,7 @@ Item {
     refreshCatalog()
     refreshDevices()
     nativeOptionProcess.running = true
+    Qt.callLater(root.refreshActiveApplication)
   }
 
   onShellChanged: {

@@ -10,6 +10,8 @@ layout and shortcut changes in the running Hyprland session.
   save automatically through Omarchy's shell configuration API.
 - Switch every safely managed typing keyboard from the panel or an optional
   recorded shortcut.
+- Optionally remember the last layout used by each focused application, while
+  keeping one global layout as the default behavior.
 - Show a label, Unicode flag, or both in the bar.
 - Optionally show the same representation through Omarchy's OSD.
 - See actual typing keyboards by default, with rejected keyboard-like devices
@@ -22,6 +24,16 @@ Hyprland and records any native `grp:*_toggle` XKB shortcut it finds. It does
 not edit `~/.config/hypr` or install a persistent Hyprland keybinding. While it
 is running, it also removes Omarchy's simpler `omarchy.keyboard-layout` widget
 from the bar through the shell's native configuration API.
+
+The settings panel reports Hyprland's detected XKB group-toggle shortcut and
+qwitch's optional recorded shortcut separately because they have different
+owners. If both are configured, both sources can switch the active layout.
+
+Layout scope is global by default. Enabling **Remember by app** uses
+Quickshell's native active-toplevel information to associate an application ID
+with the last layout selected while that application was focused. Returning to
+the application restores that layout silently. Switching back to **Global**
+stops application-specific restores without discarding the saved associations.
 
 ## Install
 
@@ -107,12 +119,24 @@ warning.
 
 ## Development
 
-Validate the manifest and run the terminal-only test suite with:
+Validate the manifest and run the model/runtime tests with:
 
 ```sh
 omarchy plugin validate .
 node --test --test-isolation=none tests/model.test.js tests/service.test.js tests/runtime.test.js
 ```
+
+In a running Omarchy graphical session, exercise the real settings panel and
+its native controls with:
+
+```sh
+tests/run-qml-tests.sh
+```
+
+The QML harness checks field sizing and focus behavior, native button-group
+signals, automatic saving, shortcut-source labeling, and viewport reset. It
+copies the panel and Omarchy UI modules into a temporary test configuration; it
+does not install or alter the plugin.
 
 The implementation follows the [Omarchy plugin development guide](https://omarchyplugins.com/develop.html)
 and targets Omarchy 4.0's Quattro shell contract.

@@ -6,6 +6,7 @@
  */
 
 var DISPLAY_MODES = ["text", "flag", "both"];
+var APPLICATION_MODES = ["global", "remember"];
 var MODIFIER_ORDER = ["SUPER", "CTRL", "ALT", "SHIFT", "CAPS", "MOD2", "MOD3", "MOD5"];
 var MODIFIER_BITS = {
     SHIFT: 1,
@@ -636,10 +637,53 @@ function defaultSettings() {
         displayMode: "both",
         osdEnabled: false,
         shortcut: null,
+        applicationMode: "global",
+        applicationLayouts: {},
         deviceOverrides: {},
         adoptedExistingConfig: false,
         nativeXkbOption: ""
     };
+}
+
+function normalizeApplicationId(value) {
+    var result = cleanText(value, 256).toLowerCase();
+    if (!result || result === "__proto__" || result === "prototype" || result === "constructor")
+        return "";
+    return result;
+}
+
+function sanitizeApplicationLayouts(value, layouts) {
+    var result = {};
+    if (!isObject(value))
+        return result;
+    var validLayouts = {};
+    var sourceLayouts = Array.isArray(layouts) ? layouts : [];
+    for (var layoutIndex = 0; layoutIndex < sourceLayouts.length; layoutIndex += 1) {
+        var key = layoutKey(sourceLayouts[layoutIndex]);
+        if (key)
+            validLayouts["$" + key] = true;
+    }
+    var keys = Object.keys(value).slice(0, 128);
+    for (var index = 0; index < keys.length; index += 1) {
+        var application = normalizeApplicationId(keys[index]);
+        var remembered = String(value[keys[index]] || "");
+        if (application && validLayouts["$" + remembered])
+            result[application] = remembered;
+    }
+    return result;
+}
+
+function applicationLayoutIndex(value, applicationId, layouts) {
+    var application = normalizeApplicationId(applicationId);
+    if (!application || !isObject(value))
+        return -1;
+    var remembered = String(value[application] || "");
+    var sourceLayouts = Array.isArray(layouts) ? layouts : [];
+    for (var index = 0; index < sourceLayouts.length; index += 1) {
+        if (layoutKey(sourceLayouts[index]) === remembered)
+            return index;
+    }
+    return -1;
 }
 
 function sanitizeNativeXkbOption(value) {
@@ -712,6 +756,9 @@ function sanitizeSettings(value) {
     result.osdEnabled = source.osdEnabled === true;
     if (source.shortcut && validateShortcut(source.shortcut) === "")
         result.shortcut = normalizeShortcut(source.shortcut);
+    if (APPLICATION_MODES.indexOf(source.applicationMode) >= 0)
+        result.applicationMode = source.applicationMode;
+    result.applicationLayouts = sanitizeApplicationLayouts(source.applicationLayouts, result.layouts);
     result.deviceOverrides = sanitizeOverrides(source.deviceOverrides);
     result.adoptedExistingConfig = source.adoptedExistingConfig === true;
     result.nativeXkbOption = sanitizeNativeXkbOption(source.nativeXkbOption);
@@ -1008,6 +1055,7 @@ function classifyDevice(keyboard, input, override) {
 
 var exported = {
     DISPLAY_MODES: DISPLAY_MODES,
+    APPLICATION_MODES: APPLICATION_MODES,
     defaultSettings: defaultSettings,
     sanitizeSettings: sanitizeSettings,
     parseXkbCatalog: parseXkbCatalog,
@@ -1030,7 +1078,10 @@ var exported = {
     classifyDevice: classifyDevice,
     parseHyprOptionString: parseHyprOptionString,
     firstGroupToggle: firstGroupToggle,
-    nativeXkbShortcutLabel: nativeXkbShortcutLabel
+    nativeXkbShortcutLabel: nativeXkbShortcutLabel,
+    normalizeApplicationId: normalizeApplicationId,
+    sanitizeApplicationLayouts: sanitizeApplicationLayouts,
+    applicationLayoutIndex: applicationLayoutIndex
 };
 
 if (typeof module !== "undefined" && module.exports)

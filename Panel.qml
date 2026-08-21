@@ -48,11 +48,22 @@ Panel {
   property var pendingSecurityDevice: null
   property bool draftReady: false
   property bool advancedDevicesVisible: false
+  // Internal aliases used by the native Quickshell integration harness.
+  // They also keep geometry/state inspection out of production behavior.
+  property alias _settingsViewport: settingsScroll
+  property alias _layoutCodeEditor: layoutCodeField
+  property alias _variantEditor: variantField
+  property alias _shortLabelEditor: shortLabelField
+  property alias _flagEditor: flagField
+  property alias _displayModeSelector: displayModeGroup
+  property alias _applicationModeSelector: applicationModeGroup
   property var draft: ({
     layouts: [],
     displayMode: "both",
     osdEnabled: false,
     shortcut: null,
+    applicationMode: "global",
+    applicationLayouts: ({}),
     deviceOverrides: ({}),
     adoptedExistingConfig: false,
     nativeXkbOption: ""
@@ -141,6 +152,9 @@ Panel {
       displayMode: mode,
       osdEnabled: source.osdEnabled === true,
       shortcut: clone(source.shortcut, null),
+      applicationMode: String(source.applicationMode || "global") === "remember"
+        ? "remember" : "global",
+      applicationLayouts: clone(objectFrom(source.applicationLayouts), ({})),
       deviceOverrides: clone(objectFrom(source.deviceOverrides), ({})),
       adoptedExistingConfig: source.adoptedExistingConfig === true,
       nativeXkbOption: String(source.nativeXkbOption || "")
@@ -247,6 +261,8 @@ Panel {
       displayMode: String(root.draft.displayMode || "both"),
       osdEnabled: root.draft.osdEnabled === true,
       shortcut: clone(root.draft.shortcut, null),
+      applicationMode: String(root.draft.applicationMode || "global"),
+      applicationLayouts: clone(objectFrom(root.draft.applicationLayouts), ({})),
       deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
       adoptedExistingConfig: root.draft.adoptedExistingConfig === true,
       nativeXkbOption: String(root.draft.nativeXkbOption || "")
@@ -413,13 +429,16 @@ Panel {
   }
 
   function displayedShortcut() {
-    if (root.draft.shortcut) return root.shortcutSummary(root.draft.shortcut)
+    return root.shortcutSummary(root.draft.shortcut)
+  }
+
+  function nativeShortcutSummary() {
     var nativeOption = String(root.draft.nativeXkbOption || "")
-    if (!nativeOption) return "Not assigned"
+    if (!nativeOption) return "No group-toggle shortcut detected"
     var label = root.service
       ? String(root.service.nativeShortcutLabel || "")
       : String(Model.nativeXkbShortcutLabel(nativeOption) || "")
-    return (label || nativeOption) + " (Hyprland)"
+    return label || nativeOption
   }
 
   function isModifierKey(key) {
@@ -551,6 +570,9 @@ Panel {
       displayMode: String(root.draft.displayMode || "both"),
       osdEnabled: root.draft.osdEnabled === true,
       shortcut: clone(root.draft.shortcut, null),
+      applicationMode: String(root.draft.applicationMode || "global"),
+      applicationLayouts: Model.sanitizeApplicationLayouts(
+        root.draft.applicationLayouts, layouts),
       deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
       adoptedExistingConfig: true,
       nativeXkbOption: String(root.draft.nativeXkbOption || "")
@@ -716,6 +738,7 @@ Panel {
 
       Flickable {
         id: settingsScroll
+        objectName: "settingsScroll"
         visible: root.settingsPage
         anchors.fill: parent
         contentWidth: width
@@ -934,6 +957,8 @@ Panel {
                   }
                 }
                 TextField {
+                  id: layoutCodeField
+                  objectName: "layoutCodeField"
                   width: parent.width
                   height: root.settingsFieldHeight
                   text: root.layoutAt(root.editingLayoutIndex).layout
@@ -963,6 +988,8 @@ Panel {
                   }
                 }
                 TextField {
+                  id: variantField
+                  objectName: "variantField"
                   width: parent.width
                   height: root.settingsFieldHeight
                   text: root.layoutAt(root.editingLayoutIndex).variant
@@ -991,6 +1018,8 @@ Panel {
                   }
                 }
                 TextField {
+                  id: shortLabelField
+                  objectName: "shortLabelField"
                   width: parent.width
                   height: root.settingsFieldHeight
                   text: root.layoutAt(root.editingLayoutIndex).label
@@ -1020,6 +1049,8 @@ Panel {
                   }
                 }
                 TextField {
+                  id: flagField
+                  objectName: "flagField"
                   width: parent.width
                   height: root.settingsFieldHeight
                   text: root.layoutAt(root.editingLayoutIndex).flag
@@ -1059,6 +1090,7 @@ Panel {
 
             ButtonGroup {
               id: displayModeGroup
+              objectName: "displayModeGroup"
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               options: [
@@ -1110,10 +1142,61 @@ Panel {
 
           PanelSeparator { foreground: root.contentForeground }
           PanelSectionHeader {
+            text: "󰖲  LAYOUT SCOPE"
+            foreground: root.contentAccent
+            fontFamily: root.contentFontFamily
+            fontSize: Style.font.body
+          }
+
+          ButtonGroup {
+            id: applicationModeGroup
+            width: parent.width
+            options: [
+              { value: "global", label: "Global" },
+              { value: "remember", label: "Remember by app" }
+            ]
+            value: String(root.draft.applicationMode || "global")
+            foreground: root.contentForeground
+            accent: root.contentAccent
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.setDraftValue("applicationMode", value) }
+          }
+
+          Text {
+            width: parent.width
+            text: String(root.draft.applicationMode || "global") === "remember"
+              ? "Each application returns to the last layout selected while it was focused."
+              : "One active layout is shared globally across all applications."
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          PanelSeparator { foreground: root.contentForeground }
+          PanelSectionHeader {
             text: "󰌌  SWITCHING SHORTCUT"
             foreground: root.contentAccent
             fontFamily: root.contentFontFamily
             fontSize: Style.font.body
+          }
+
+          Text {
+            width: parent.width
+            text: "Hyprland shortcut · " + root.nativeShortcutSummary()
+            color: Qt.darker(root.contentForeground, 1.25)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            width: parent.width
+            text: "qwitch shortcut"
+            color: Qt.darker(root.contentForeground, 1.25)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
           }
 
           Item {
@@ -1176,6 +1259,19 @@ Panel {
                 root.setDraftValue("shortcut", null)
               }
             }
+          }
+
+          Text {
+            visible: String(root.draft.nativeXkbOption || "") !== ""
+              && root.draft.shortcut !== null && root.draft.shortcut !== undefined
+            width: parent.width
+            text: "Both shortcut sources are configured: Hyprland owns "
+              + root.nativeShortcutSummary() + "; qwitch is configured for "
+              + root.shortcutSummary(root.draft.shortcut) + "."
+            color: root.contentAccent
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
           }
 
           Text {

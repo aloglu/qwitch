@@ -177,9 +177,11 @@ test("README documents plugin updates and stale-shell recovery", () => {
   assert.match(readme, /fast-forward/i)
 })
 
-test("settings reopen at the top and show an adopted native shortcut inline", () => {
+test("settings reopen at the top and distinguish shortcut ownership", () => {
   assert.match(panel, /function displayedShortcut\(\)/)
-  assert.match(panel, /\+ " \(Hyprland\)"/)
+  assert.match(panel, /Hyprland shortcut · /)
+  assert.match(panel, /text: "qwitch shortcut"/)
+  assert.match(panel, /Both shortcut sources are configured:/)
   assert.match(panel, /settingsScroll\.contentY = 0/)
   assert.match(panel, /text: "qwitch: Settings"/)
   assert.match(panel, /text: "qwitch: Layouts"/)
@@ -191,5 +193,28 @@ test("OSD preferences bypass runtime startup queuing and use Omarchy OSD", () =>
   assert.match(service, /shell\.summon\("omarchy\.osd", JSON\.stringify\(payload\)\)/)
   assert.match(service, /if \(!osdEnabled \|\| !shell \|\| !activeLayout\) return/)
   assert.match(service, /name\.indexOf\("activelayout"\)[\s\S]*_showOsdAfterExternalRefresh = true/)
-  assert.match(service, /if \(showExternalOsd\) Qt\.callLater\(root\.showLayoutOsd\)/)
+  assert.match(service, /if \(showExternalOsd\) \{[\s\S]*Qt\.callLater\(root\.showLayoutOsd\)/)
+})
+
+test("per-application memory is opt-in and driven by native toplevel focus", () => {
+  assert.match(service, /target: ToplevelManager/)
+  assert.match(service, /function onActiveToplevelChanged\(\) \{ root\.refreshActiveApplication\(\) \}/)
+  assert.match(service, /target: ToplevelManager\.activeToplevel/)
+  assert.match(service, /Model\.normalizeApplicationId\(toplevel\.appId \|\| ""\)/)
+  assert.match(service, /Model\.applicationLayoutIndex\(settings\.applicationLayouts/)
+  assert.match(service, /switchTo\(target, false, false\)/)
+  assert.match(service, /rememberApplicationLayout\(root\._switchTarget, root\._switchApplicationId\)/)
+  assert.match(panel, /value: String\(root\.draft\.applicationMode \|\| "global"\)/)
+  assert.match(panel, /value: "global", label: "Global"/)
+  assert.match(panel, /value: "remember", label: "Remember by app"/)
+})
+
+test("native QML interaction harness covers the real settings panel", () => {
+  const harness = fs.readFileSync(path.join(projectRoot, "tests/qml/shell.qml"), "utf8")
+  const runner = fs.readFileSync(path.join(projectRoot, "tests/run-qml-tests.sh"), "utf8")
+  assert.match(harness, /Panel\s*\{[\s\S]*id: subject/)
+  assert.match(harness, /layout editor text must not be clipped/)
+  assert.match(harness, /valid edits must auto-save/)
+  assert.match(harness, /closing must reset the viewport/)
+  assert.match(runner, /quickshell --path/)
 })

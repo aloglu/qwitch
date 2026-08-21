@@ -135,8 +135,8 @@ ShellRoot {
       accepted: false
     }
     subject.recordShortcut(modifierEvent)
-    check(subject.shortcutError.indexOf("Ctrl + Alt + Shift is not available") >= 0,
-      "an unsupported modifier-only chord must explain why it cannot be recorded")
+    check(subject.shortcutError.indexOf("For a modifier-only shortcut") >= 0,
+      "every modifier-only chord must direct the user to the native selector")
     subject.capturingShortcut = false
   }
 

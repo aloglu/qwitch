@@ -34,10 +34,10 @@ they still match the values qwitch applied; an external change is left alone.
 While running, qwitch also removes Omarchy's simpler
 `omarchy.keyboard-layout` widget through the shell's native configuration API.
 
-XKB supports established modifier-only group toggles such as Alt+Shift,
-Ctrl+Shift, and Ctrl+Alt, but not Ctrl+Alt+Shift. Custom Hyprland shortcuts must
-contain a non-modifier key. The recorder reports that limitation instead of
-silently ignoring an unsupported chord.
+XKB supports a defined set of modifier-only group toggles, exposed by qwitch's
+native shortcut selector. Custom Hyprland shortcuts must contain a non-modifier
+key. The recorder reports that general limitation instead of silently ignoring
+an unsupported modifier-only chord.
 
 Layout scope is global by default. **Remember by app** uses Quickshell's native
 active-toplevel information to associate an application ID with a persisted

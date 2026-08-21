@@ -529,12 +529,7 @@ Panel {
       return
     }
     if (isModifierKey(event.key)) {
-      var tripleModifier = (event.modifiers & Qt.ControlModifier)
-        && (event.modifiers & Qt.AltModifier)
-        && (event.modifiers & Qt.ShiftModifier)
-      root.shortcutError = tripleModifier
-        ? "Ctrl + Alt + Shift is not available as an XKB layout toggle. Choose one of the supported native shortcuts below."
-        : "For a custom shortcut, keep holding the modifiers and press a regular key. For a modifier-only shortcut, choose a native XKB option below."
+      root.shortcutError = "For a custom shortcut, keep holding the modifiers and press a regular key. For a modifier-only shortcut, choose a native XKB option below."
       event.accepted = true
       return
     }

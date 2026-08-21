@@ -158,8 +158,10 @@ test("panel headers and mixed control rows use compact aligned geometry", () => 
   assert.match(panel, /id: moveUpButton[\s\S]*anchors\.verticalCenter: parent\.verticalCenter/)
   assert.match(panel, /Grid\s*\{[\s\S]*readonly property real fieldWidth: \(width - columnSpacing\) \/ 2/)
   assert.equal((panel.match(/width: parent\.fieldWidth/g) || []).length, 4)
-  assert.equal((panel.match(/hoverEnabled: false/g) || []).length, 5)
-  assert.match(panel, /id: displayModeGroup[\s\S]*showLabel: false/)
+  assert.equal((panel.match(/height: root\.settingsFieldHeight/g) || []).length, 4)
+  assert.match(panel, /TextMetrics\s*\{[\s\S]*text: "English 🇺🇸"/)
+  assert.match(panel, /ButtonGroup\s*\{\s*id: displayModeGroup/)
+  assert.doesNotMatch(panel, /hoverEnabled: false/)
 })
 
 test("typing keyboards appear before the advanced device controls", () => {

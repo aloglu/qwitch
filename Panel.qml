@@ -24,6 +24,18 @@ Panel {
   readonly property color contentAccent: Color.accent
   readonly property color contentUrgent: bar && "urgent" in bar ? bar.urgent : Color.urgent
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property int settingsFieldHeight: Math.max(
+    Style.spacing.controlHeight,
+    Math.ceil(settingsFieldMetrics.height) + Style.spacing.inputPaddingY * 2
+      + Math.max(Style.normalBorderWidth, Style.hoverBorderWidth,
+        Style.focusBorderWidth) * 2)
+
+  TextMetrics {
+    id: settingsFieldMetrics
+    font.family: root.contentFontFamily
+    font.pixelSize: Style.font.subtitle
+    text: "English 🇺🇸"
+  }
 
   property bool settingsPage: false
   property int selectorIndex: 0
@@ -923,14 +935,13 @@ Panel {
                 }
                 TextField {
                   width: parent.width
-                  height: Style.spacing.controlHeight
+                  height: root.settingsFieldHeight
                   text: root.layoutAt(root.editingLayoutIndex).layout
                   placeholderText: "us"
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.subtitle
-                  hoverEnabled: false
                   activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "layout", text)
                 }
@@ -953,14 +964,13 @@ Panel {
                 }
                 TextField {
                   width: parent.width
-                  height: Style.spacing.controlHeight
+                  height: root.settingsFieldHeight
                   text: root.layoutAt(root.editingLayoutIndex).variant
                   placeholderText: "Optional"
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.subtitle
-                  hoverEnabled: false
                   activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "variant", text)
                 }
@@ -982,14 +992,13 @@ Panel {
                 }
                 TextField {
                   width: parent.width
-                  height: Style.spacing.controlHeight
+                  height: root.settingsFieldHeight
                   text: root.layoutAt(root.editingLayoutIndex).label
                   placeholderText: "EN"
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.subtitle
-                  hoverEnabled: false
                   activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "label", text)
                 }
@@ -1012,14 +1021,13 @@ Panel {
                 }
                 TextField {
                   width: parent.width
-                  height: Style.spacing.controlHeight
+                  height: root.settingsFieldHeight
                   text: root.layoutAt(root.editingLayoutIndex).flag
                   placeholderText: "🇺🇸"
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.subtitle
-                  hoverEnabled: false
                   activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "flag", text)
                 }
@@ -1049,12 +1057,10 @@ Panel {
               font.pixelSize: Style.font.body
             }
 
-            Dropdown {
+            ButtonGroup {
               id: displayModeGroup
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              width: Style.spacing.dropdownWidth
-              showLabel: false
               options: [
                 { value: "text", label: "Text" },
                 { value: "flag", label: "Flag" },
@@ -1128,7 +1134,6 @@ Panel {
               accent: root.contentAccent
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.subtitle
-              hoverEnabled: false
               Keys.priority: Keys.BeforeItem
               Keys.onPressed: function(event) { root.recordShortcut(event) }
             }

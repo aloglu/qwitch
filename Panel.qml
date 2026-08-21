@@ -169,13 +169,19 @@ Panel {
     if (!root.settingsPage) root.prepareDraft()
     root.settingsPage = true
     root.controller.show()
-    Qt.callLater(function() { settingsScroll.forceActiveFocus() })
+    Qt.callLater(function() {
+      settingsScroll.contentY = 0
+      settingsScroll.returnToBounds()
+      settingsScroll.forceActiveFocus()
+    })
   }
 
   function close() {
     root.capturingShortcut = false
     root.pendingSecurityDevice = null
     root.settingsPage = false
+    settingsScroll.contentY = 0
+    settingsScroll.returnToBounds()
     root.controller.hide()
   }
 
@@ -192,6 +198,8 @@ Panel {
     root.capturingShortcut = false
     root.pendingSecurityDevice = null
     root.settingsPage = false
+    settingsScroll.contentY = 0
+    settingsScroll.returnToBounds()
     root.syncSelectorIndex()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -394,6 +402,16 @@ Panel {
     return parts.length > 0 ? parts.join(" + ") : "Not assigned"
   }
 
+  function displayedShortcut() {
+    if (root.draft.shortcut) return root.shortcutSummary(root.draft.shortcut)
+    var nativeOption = String(root.draft.nativeXkbOption || "")
+    if (!nativeOption) return "Not assigned"
+    var label = root.service
+      ? String(root.service.nativeShortcutLabel || "")
+      : String(Model.nativeXkbShortcutLabel(nativeOption) || "")
+    return (label || nativeOption) + " (Hyprland)"
+  }
+
   function isModifierKey(key) {
     return key === Qt.Key_Shift || key === Qt.Key_Control || key === Qt.Key_Meta
       || key === Qt.Key_Alt || key === Qt.Key_AltGr || key === Qt.Key_CapsLock
@@ -588,7 +606,7 @@ Panel {
             anchors.right: settingsButton.left
             anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
-            text: "Keyboard layouts"
+            text: "qwitch: Layouts"
             color: root.contentForeground
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.title
@@ -707,28 +725,13 @@ Panel {
           width: settingsScroll.width
           spacing: Style.space(10)
 
-          Column {
+          Text {
             width: parent.width
-            spacing: Style.space(2)
-
-            Text {
-              width: parent.width
-              text: "qwitch settings"
-              color: root.contentForeground
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-            }
-
-            Text {
-              width: parent.width
-              text: (root.saveStatus || "Changes save automatically").toUpperCase()
-              color: Qt.darker(root.contentForeground, 1.4)
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              font.letterSpacing: 1.2
-            }
+            text: "qwitch: Settings"
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
           }
 
           PanelSeparator { foreground: root.contentForeground }
@@ -898,12 +901,15 @@ Panel {
               elide: Text.ElideRight
             }
 
-            Row {
+            Grid {
               width: parent.width
-              spacing: Style.space(8)
+              columns: 2
+              columnSpacing: Style.space(8)
+              rowSpacing: Style.space(6)
+              readonly property real fieldWidth: (width - columnSpacing) / 2
 
               Column {
-                width: (parent.width - parent.spacing) / 2
+                width: parent.fieldWidth
                 spacing: Style.space(3)
                 Text {
                   text: "Layout code  󰋼"
@@ -930,7 +936,7 @@ Panel {
               }
 
               Column {
-                width: (parent.width - parent.spacing) / 2
+                width: parent.fieldWidth
                 spacing: Style.space(3)
                 Text {
                   text: "Variant  󰋼"
@@ -955,14 +961,8 @@ Panel {
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "variant", text)
                 }
               }
-            }
-
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-
               Column {
-                width: (parent.width - parent.spacing) / 2
+                width: parent.fieldWidth
                 spacing: Style.space(3)
                 Text {
                   text: "Short label  󰋼"
@@ -989,7 +989,7 @@ Panel {
               }
 
               Column {
-                width: (parent.width - parent.spacing) / 2
+                width: parent.fieldWidth
                 spacing: Style.space(3)
                 Text {
                   text: "Flag emoji  󰋼"
@@ -1027,11 +1027,21 @@ Panel {
 
           Item {
             width: parent.width
-            height: Math.max(displayModeGroup.implicitHeight, osdSwitch.implicitHeight)
+            height: Math.max(displayModeLabel.implicitHeight, displayModeGroup.implicitHeight)
+
+            Text {
+              id: displayModeLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Bar display"
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.body
+            }
 
             ButtonGroup {
               id: displayModeGroup
-              anchors.left: parent.left
+              anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               options: [
                 { value: "text", label: "Text" },
@@ -1045,12 +1055,17 @@ Panel {
               onChanged: function(value) { root.setDraftValue("displayMode", value) }
             }
 
+          }
+
+          Item {
+            width: parent.width
+            height: Math.max(osdLabel.implicitHeight, osdSwitch.implicitHeight)
+
             Text {
               id: osdLabel
-              anchors.right: osdSwitch.left
-              anchors.rightMargin: Style.space(6)
+              anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
-              text: "OSD  󰋼"
+              text: "Show layout changes on OSD  󰋼"
               color: root.contentForeground
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.body
@@ -1083,18 +1098,6 @@ Panel {
             fontSize: Style.font.body
           }
 
-          Text {
-            visible: String(root.draft.nativeXkbOption || "") !== ""
-            width: parent.width
-            text: "Using Hyprland’s existing XKB shortcut: "
-              + (root.service ? String(root.service.nativeShortcutLabel || root.draft.nativeXkbOption)
-                : String(root.draft.nativeXkbOption))
-            color: Qt.darker(root.contentForeground, 1.25)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
           Item {
             width: parent.width
             height: Style.spacing.controlHeight
@@ -1108,7 +1111,7 @@ Panel {
               height: parent.height
               readOnly: true
               text: root.capturingShortcut
-                ? "Press a key combination…" : root.shortcutSummary(root.draft.shortcut)
+                ? "Press a key combination…" : root.displayedShortcut()
               foreground: root.contentForeground
               accent: root.contentAccent
               font.family: root.contentFontFamily

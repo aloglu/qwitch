@@ -35,6 +35,11 @@ Item {
     || !_runtimeReady || _layoutPipeline || _rebaseAfterReload
   property string lastError: ""
   property string shortcutConflict: ""
+  // Presentation preferences are safe to accept while the runtime service is
+  // still draining its previous lease. Keeping them outside the mutation
+  // queue makes the persisted OSD choice effective immediately after boot.
+  property bool osdEnabled: false
+  property string osdDisplayMode: "both"
   readonly property bool canSwitch: configuredLayouts.length > 0
     && configuredLayouts.length <= _maximumRuntimeLayouts
     && managedDevices.length > 0 && !busy
@@ -85,6 +90,9 @@ Item {
   property string _layoutOperation: ""
   property int _targetAfterApply: 0
   property bool _showOsdAfterSwitch: false
+  property bool _showOsdAfterExternalRefresh: false
+  property int _externalRefreshPreviousIndex: -1
+  property bool _externalRefreshPreviousMixed: false
   property int _switchTarget: -1
   property var _switchPrevious: ({})
   property string _bindingOperation: ""
@@ -282,6 +290,8 @@ Item {
     if (_superseded) return
     _settingsReceived = true
     var next = Model.sanitizeSettings(value)
+    osdEnabled = next.osdEnabled === true
+    osdDisplayMode = String(next.displayMode || "both")
     var signature = JSON.stringify(next)
     if (busy) {
       _queuedSettings = signature === _settingsSignature ? null : next
@@ -328,8 +338,20 @@ Item {
   // mistaken for another first run.
   function maybeAdoptExistingConfig() {
     if (_adoptionAttempted || !_settingsReceived || !_nativeOptionReady) return
+    var detectedShortcut = Model.firstGroupToggle(Model.parseHyprOptionString(_nativeOptionOutput))
     if (settings.adoptedExistingConfig === true) {
       _adoptionAttempted = true
+      // Keep the informational native shortcut current even after the initial
+      // layout adoption. This also migrates installs whose earlier saved entry
+      // did not include the detected input:kb_options value.
+      if (String(settings.nativeXkbOption || "") !== detectedShortcut) {
+        var refreshed = clone(settings, Model.defaultSettings())
+        refreshed.nativeXkbOption = detectedShortcut
+        applySettings(Model.sanitizeSettings(refreshed), true)
+        if (shell && typeof shell.updateEntryInline === "function")
+          shell.updateEntryInline("io.github.aloglu.qwitch", refreshed)
+        Qt.callLater(root.finishMutation)
+      }
       return
     }
     var importingLayouts = configuredLayouts.length === 0
@@ -339,7 +361,7 @@ Item {
     var candidate = clone(settings, Model.defaultSettings())
     candidate.layouts = importingLayouts ? clone(layouts, []) : clone(configuredLayouts, [])
     candidate.adoptedExistingConfig = true
-    candidate.nativeXkbOption = Model.firstGroupToggle(Model.parseHyprOptionString(_nativeOptionOutput))
+    candidate.nativeXkbOption = detectedShortcut
     applySettings(Model.sanitizeSettings(candidate), true)
     if (importingLayouts) _reconcilePending = true
     if (shell && typeof shell.updateEntryInline === "function")
@@ -354,6 +376,8 @@ Item {
     var previousOverrides = JSON.stringify(settings && settings.deviceOverrides ? settings.deviceOverrides : {})
     var previousShortcut = JSON.stringify(settings && settings.shortcut ? settings.shortcut : null)
     settings = next
+    osdEnabled = next.osdEnabled === true
+    osdDisplayMode = String(next.displayMode || "both")
     configuredLayouts = next.layouts
     _settingsSignature = signature
     recomputeLayouts()
@@ -512,6 +536,7 @@ Item {
     try {
       payload = JSON.parse(_devicesOutput || "{}")
     } catch (error) {
+      _showOsdAfterExternalRefresh = false
       lastError = "Could not read Hyprland keyboards"
       finishDeviceRefresh()
       return
@@ -568,6 +593,10 @@ Item {
 
     devices = next
     recomputeLayouts()
+    var showExternalOsd = _showOsdAfterExternalRefresh
+      && !mixedState && activeIndex >= 0
+      && (_externalRefreshPreviousMixed || activeIndex !== _externalRefreshPreviousIndex)
+    _showOsdAfterExternalRefresh = false
     maybeAdoptExistingConfig()
     if (_runtimeAwaitingFreshDevices && _activeDeviceRefreshSerial > _runtimeReadyAfterSerial) {
       _runtimeAwaitingFreshDevices = false
@@ -577,6 +606,11 @@ Item {
       _bindRefreshPending = true
     }
     finishDeviceRefresh()
+
+    // Native XKB group toggles change Hyprland directly rather than entering
+    // switchTo(). Once the refreshed state is known, route those changes
+    // through the same native Omarchy OSD used by qwitch-owned shortcuts.
+    if (showExternalOsd) Qt.callLater(root.showLayoutOsd)
 
     if (_superseded) return
 
@@ -1087,8 +1121,8 @@ Item {
   }
 
   function showLayoutOsd() {
-    if (!settings.osdEnabled || !shell || !activeLayout) return
-    var mode = settings.displayMode || "both"
+    if (!osdEnabled || !shell || !activeLayout) return
+    var mode = osdDisplayMode || "both"
     var label = activeLayout.label || String(activeLayout.layout || "").toUpperCase()
     var flag = activeLayout.flag || ""
     var payload
@@ -1549,8 +1583,18 @@ Item {
         root._rebaseAfterSerial = root._deviceRefreshSerial
         root._postReloadBindSerial = root._bindRefreshSerial
         root._activeShortcut = null
+        root._showOsdAfterExternalRefresh = false
+        root._adoptionAttempted = false
+        root._nativeOptionReady = false
+        if (!nativeOptionProcess.running) nativeOptionProcess.running = true
         reloadTimer.restart()
       } else if (name.indexOf("activelayout") !== -1 || name.indexOf("device") !== -1) {
+        if (name.indexOf("activelayout") !== -1 && root._runtimeReady
+            && !root._layoutPipeline && !root._showOsdAfterExternalRefresh) {
+          root._externalRefreshPreviousIndex = root.activeIndex
+          root._externalRefreshPreviousMixed = root.mixedState
+          root._showOsdAfterExternalRefresh = true
+        }
         refreshTimer.restart()
       }
     }

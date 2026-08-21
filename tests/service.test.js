@@ -104,6 +104,8 @@ test("first run adopts existing Hyprland layouts and the native group toggle", (
   assert.match(service, /candidate\.adoptedExistingConfig = true/)
   assert.match(service, /Model\.firstGroupToggle\(Model\.parseHyprOptionString/)
   assert.match(service, /"input:kb_options"/)
+  assert.match(service, /settings\.nativeXkbOption[\s\S]*!== detectedShortcut/)
+  assert.match(service, /nativeOptionProcess\.running = true/)
   assert.match(service, /shell\.updateEntryInline\("io\.github\.aloglu\.qwitch", candidate\)/)
 })
 
@@ -152,5 +154,23 @@ test("panel headers and mixed control rows use compact aligned geometry", () => 
   assert.match(panel, /id: osdSwitch[\s\S]*trackHeight: Style\.space\(18\)/)
   assert.match(panel, /id: shortcutField[\s\S]*height: parent\.height/)
   assert.match(panel, /id: moveUpButton[\s\S]*anchors\.verticalCenter: parent\.verticalCenter/)
-  assert.equal((panel.match(/width: \(parent\.width - parent\.spacing\) \/ 2/g) || []).length, 4)
+  assert.match(panel, /Grid\s*\{[\s\S]*readonly property real fieldWidth: \(width - columnSpacing\) \/ 2/)
+  assert.equal((panel.match(/width: parent\.fieldWidth/g) || []).length, 4)
+})
+
+test("settings reopen at the top and show an adopted native shortcut inline", () => {
+  assert.match(panel, /function displayedShortcut\(\)/)
+  assert.match(panel, /\+ " \(Hyprland\)"/)
+  assert.match(panel, /settingsScroll\.contentY = 0/)
+  assert.match(panel, /text: "qwitch: Settings"/)
+  assert.match(panel, /text: "qwitch: Layouts"/)
+  assert.doesNotMatch(panel, /Changes save automatically/i)
+})
+
+test("OSD preferences bypass runtime startup queuing and use Omarchy OSD", () => {
+  assert.match(service, /osdEnabled = next\.osdEnabled === true[\s\S]*if \(busy\)/)
+  assert.match(service, /shell\.summon\("omarchy\.osd", JSON\.stringify\(payload\)\)/)
+  assert.match(service, /if \(!osdEnabled \|\| !shell \|\| !activeLayout\) return/)
+  assert.match(service, /name\.indexOf\("activelayout"\)[\s\S]*_showOsdAfterExternalRefresh = true/)
+  assert.match(service, /if \(showExternalOsd\) Qt\.callLater\(root\.showLayoutOsd\)/)
 })

@@ -6,7 +6,7 @@
  */
 
 var DISPLAY_MODES = ["text", "flag", "both"];
-var APPLICATION_MODES = ["global", "remember"];
+var LAYOUT_SCOPES = ["global", "application", "window"];
 var MODIFIER_ORDER = ["SUPER", "CTRL", "ALT", "SHIFT", "CAPS", "MOD2", "MOD3", "MOD5"];
 var MODIFIER_BITS = {
     SHIFT: 1,
@@ -637,7 +637,7 @@ function defaultSettings() {
         displayMode: "both",
         osdEnabled: false,
         shortcut: null,
-        applicationMode: "global",
+        layoutScope: "global",
         applicationLayouts: {},
         deviceOverrides: {},
         adoptedExistingConfig: false,
@@ -652,7 +652,7 @@ function normalizeApplicationId(value) {
     return result;
 }
 
-function sanitizeApplicationLayouts(value, layouts) {
+function sanitizeLayoutMemories(value, layouts) {
     var result = {};
     if (!isObject(value))
         return result;
@@ -665,25 +665,33 @@ function sanitizeApplicationLayouts(value, layouts) {
     }
     var keys = Object.keys(value).slice(0, 128);
     for (var index = 0; index < keys.length; index += 1) {
-        var application = normalizeApplicationId(keys[index]);
+        var identity = normalizeApplicationId(keys[index]);
         var remembered = String(value[keys[index]] || "");
-        if (application && validLayouts["$" + remembered])
-            result[application] = remembered;
+        if (identity && validLayouts["$" + remembered])
+            result[identity] = remembered;
     }
     return result;
 }
 
-function applicationLayoutIndex(value, applicationId, layouts) {
-    var application = normalizeApplicationId(applicationId);
-    if (!application || !isObject(value))
+function sanitizeApplicationLayouts(value, layouts) {
+    return sanitizeLayoutMemories(value, layouts);
+}
+
+function rememberedLayoutIndex(value, identity, layouts) {
+    var normalizedIdentity = normalizeApplicationId(identity);
+    if (!normalizedIdentity || !isObject(value))
         return -1;
-    var remembered = String(value[application] || "");
+    var remembered = String(value[normalizedIdentity] || "");
     var sourceLayouts = Array.isArray(layouts) ? layouts : [];
     for (var index = 0; index < sourceLayouts.length; index += 1) {
         if (layoutKey(sourceLayouts[index]) === remembered)
             return index;
     }
     return -1;
+}
+
+function applicationLayoutIndex(value, applicationId, layouts) {
+    return rememberedLayoutIndex(value, applicationId, layouts);
 }
 
 function sanitizeNativeXkbOption(value) {
@@ -756,8 +764,15 @@ function sanitizeSettings(value) {
     result.osdEnabled = source.osdEnabled === true;
     if (source.shortcut && validateShortcut(source.shortcut) === "")
         result.shortcut = normalizeShortcut(source.shortcut);
-    if (APPLICATION_MODES.indexOf(source.applicationMode) >= 0)
-        result.applicationMode = source.applicationMode;
+    var layoutScope = source.layoutScope;
+    if (LAYOUT_SCOPES.indexOf(layoutScope) < 0) {
+        if (source.applicationMode === "remember")
+            layoutScope = "application";
+        else if (source.applicationMode === "window")
+            layoutScope = "window";
+    }
+    if (LAYOUT_SCOPES.indexOf(layoutScope) >= 0)
+        result.layoutScope = layoutScope;
     result.applicationLayouts = sanitizeApplicationLayouts(source.applicationLayouts, result.layouts);
     result.deviceOverrides = sanitizeOverrides(source.deviceOverrides);
     result.adoptedExistingConfig = source.adoptedExistingConfig === true;
@@ -1055,7 +1070,7 @@ function classifyDevice(keyboard, input, override) {
 
 var exported = {
     DISPLAY_MODES: DISPLAY_MODES,
-    APPLICATION_MODES: APPLICATION_MODES,
+    LAYOUT_SCOPES: LAYOUT_SCOPES,
     defaultSettings: defaultSettings,
     sanitizeSettings: sanitizeSettings,
     parseXkbCatalog: parseXkbCatalog,
@@ -1080,7 +1095,9 @@ var exported = {
     firstGroupToggle: firstGroupToggle,
     nativeXkbShortcutLabel: nativeXkbShortcutLabel,
     normalizeApplicationId: normalizeApplicationId,
+    sanitizeLayoutMemories: sanitizeLayoutMemories,
     sanitizeApplicationLayouts: sanitizeApplicationLayouts,
+    rememberedLayoutIndex: rememberedLayoutIndex,
     applicationLayoutIndex: applicationLayoutIndex
 };
 

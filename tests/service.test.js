@@ -208,19 +208,34 @@ test("OSD preferences bypass runtime startup queuing and use Omarchy OSD", () =>
   assert.match(service, /if \(showExternalOsd\) Qt\.callLater\(root\.showLayoutOsd\)/)
 })
 
-test("per-application memory is opt-in and driven by native toplevel focus", () => {
+test("per-application memory remains available through the native app identity", () => {
   assert.match(service, /target: ToplevelManager/)
   assert.match(service, /function onActiveToplevelChanged\(\) \{ root\.refreshActiveApplication\(\) \}/)
   assert.match(service, /target: ToplevelManager\.activeToplevel/)
   assert.match(service, /Model\.normalizeApplicationId\(toplevel\.appId \|\| ""\)/)
-  assert.match(service, /Model\.applicationLayoutIndex\(settings\.applicationLayouts/)
+  assert.match(service, /scope === "application" \? settings\.applicationLayouts : windowLayouts/)
+  assert.match(service, /Model\.rememberedLayoutIndex\(memories, identity, layouts\)/)
   assert.match(service, /switchTo\(target, false, false\)/)
-  assert.match(service, /rememberApplicationLayout\(root\._switchTarget, root\._switchApplicationId\)/)
+  assert.match(service, /root\.rememberFocusedLayout\(root\._switchTarget,/)
   assert.match(service, /var learnedExternalLayout = mayLearnExternalLayout/)
-  assert.match(service, /if \(learnedExternalLayout\) root\.rememberApplicationLayout\(root\.activeIndex\)/)
-  assert.match(panel, /value: String\(root\.draft\.applicationMode \|\| "global"\)/)
+  assert.match(service, /root\.rememberFocusedLayout\(root\.activeIndex,/)
+  assert.match(panel, /value: String\(root\.draft\.layoutScope \|\| "global"\)/)
   assert.match(panel, /value: "global", label: "Global"/)
-  assert.match(panel, /value: "remember", label: "Remember by app"/)
+  assert.match(panel, /value: "application", label: "Per app"/)
+})
+
+test("per-window memory uses live Hyprland identities and remains session-only", () => {
+  const manifest = fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8")
+  assert.match(service, /activeWindowId = windowIdFor\(Hyprland\.activeToplevel\)/)
+  assert.match(service, /address !== "0x0" && \/\^0x\[0-9a-f\]\+\$\//)
+  assert.match(service, /target: Hyprland\.toplevels/)
+  assert.match(service, /function onValuesChanged\(\) \{[\s\S]*root\.pruneWindowLayouts\(\)/)
+  assert.match(service, /property var windowLayouts: \(\{\}\)/)
+  assert.match(service, /if \(target < 0\) \{[\s\S]*rememberFocusedLayout\(activeIndex/)
+  assert.match(service, /_externalRefreshWindowId = root\.activeWindowId/)
+  assert.match(service, /rememberFocusedLayout\(root\.activeIndex, learnedApplicationId, learnedWindowId\)/)
+  assert.match(panel, /value: "window", label: "Per window"/)
+  assert.doesNotMatch(manifest, /"windowLayouts"/)
 })
 
 test("native QML interaction harness covers the real settings panel", () => {

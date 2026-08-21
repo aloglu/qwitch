@@ -29,14 +29,17 @@ The settings panel reports Hyprland's detected XKB group-toggle shortcut and
 qwitch's optional recorded shortcut separately because they have different
 owners. If both are configured, both sources can switch the active layout.
 
-Layout scope is global by default. Enabling **Remember by app** uses
-Quickshell's native active-toplevel information to associate an application ID
-with the last layout selected while that application was focused. Returning to
-the application restores that layout silently. Switching back to **Global**
-stops application-specific restores without discarding the saved associations.
-Every bar instance reads the active layout from qwitch's singleton service, so
-an application-specific restore updates the displayed bar layout on every
-monitor at the same time.
+Layout scope is global by default. **Remember by app** uses Quickshell's native
+active-toplevel information to associate an application ID with a persisted
+layout, shared by every window belonging to that application. **Remember by
+window** instead uses Hyprland's native live-window identity, allowing two
+windows from the same application to keep different layouts. Window memories
+are intentionally session-only and are removed when their windows close; they
+are not reconstructed from titles, process IDs, or other unreliable guesses.
+Switching back to **Global** stops focus-driven restores without discarding
+application memories. Every bar instance reads the active layout from qwitch's
+singleton service, so a focus-driven restore updates the displayed bar layout
+on every monitor at the same time.
 
 ## Install
 

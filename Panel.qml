@@ -56,13 +56,13 @@ Panel {
   property alias _shortLabelEditor: shortLabelField
   property alias _flagEditor: flagField
   property alias _displayModeSelector: displayModeGroup
-  property alias _applicationModeSelector: applicationModeGroup
+  property alias _layoutScopeSelector: layoutScopeGroup
   property var draft: ({
     layouts: [],
     displayMode: "both",
     osdEnabled: false,
     shortcut: null,
-    applicationMode: "global",
+    layoutScope: "global",
     applicationLayouts: ({}),
     deviceOverrides: ({}),
     adoptedExistingConfig: false,
@@ -152,8 +152,7 @@ Panel {
       displayMode: mode,
       osdEnabled: source.osdEnabled === true,
       shortcut: clone(source.shortcut, null),
-      applicationMode: String(source.applicationMode || "global") === "remember"
-        ? "remember" : "global",
+      layoutScope: root.layoutScopeFrom(source),
       applicationLayouts: clone(objectFrom(source.applicationLayouts), ({})),
       deviceOverrides: clone(objectFrom(source.deviceOverrides), ({})),
       adoptedExistingConfig: source.adoptedExistingConfig === true,
@@ -170,6 +169,13 @@ Panel {
     root.draftReady = true
     if (root.service && typeof root.service.refreshCatalog === "function") root.service.refreshCatalog()
     if (root.service && typeof root.service.refreshDevices === "function") root.service.refreshDevices()
+  }
+
+  function layoutScopeFrom(source) {
+    var value = String(source && source.layoutScope || "")
+    if (["global", "application", "window"].indexOf(value) >= 0) return value
+    return String(source && source.applicationMode || "") === "remember"
+      ? "application" : "global"
   }
 
   function syncSelectorIndex() {
@@ -261,7 +267,7 @@ Panel {
       displayMode: String(root.draft.displayMode || "both"),
       osdEnabled: root.draft.osdEnabled === true,
       shortcut: clone(root.draft.shortcut, null),
-      applicationMode: String(root.draft.applicationMode || "global"),
+      layoutScope: String(root.draft.layoutScope || "global"),
       applicationLayouts: clone(objectFrom(root.draft.applicationLayouts), ({})),
       deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
       adoptedExistingConfig: root.draft.adoptedExistingConfig === true,
@@ -570,7 +576,7 @@ Panel {
       displayMode: String(root.draft.displayMode || "both"),
       osdEnabled: root.draft.osdEnabled === true,
       shortcut: clone(root.draft.shortcut, null),
-      applicationMode: String(root.draft.applicationMode || "global"),
+      layoutScope: String(root.draft.layoutScope || "global"),
       applicationLayouts: Model.sanitizeApplicationLayouts(
         root.draft.applicationLayouts, layouts),
       deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
@@ -1148,24 +1154,27 @@ Panel {
           }
 
           ButtonGroup {
-            id: applicationModeGroup
+            id: layoutScopeGroup
             width: parent.width
             options: [
               { value: "global", label: "Global" },
-              { value: "remember", label: "Remember by app" }
+              { value: "application", label: "Per app" },
+              { value: "window", label: "Per window" }
             ]
-            value: String(root.draft.applicationMode || "global")
+            value: String(root.draft.layoutScope || "global")
             foreground: root.contentForeground
             accent: root.contentAccent
             fontFamily: root.contentFontFamily
-            onChanged: function(value) { root.setDraftValue("applicationMode", value) }
+            onChanged: function(value) { root.setDraftValue("layoutScope", value) }
           }
 
           Text {
             width: parent.width
-            text: String(root.draft.applicationMode || "global") === "remember"
-              ? "Each application returns to the last layout selected while it was focused."
-              : "One active layout is shared globally across all applications."
+            text: String(root.draft.layoutScope || "global") === "window"
+              ? "Each open window keeps its own layout until that window closes or the shell restarts."
+              : String(root.draft.layoutScope || "global") === "application"
+                ? "Every window belonging to an application shares its remembered layout."
+                : "One active layout is shared globally across all applications."
             color: Qt.darker(root.contentForeground, 1.4)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.bodySmall

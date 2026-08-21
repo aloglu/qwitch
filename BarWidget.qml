@@ -48,8 +48,11 @@ BarWidget {
       out.displayMode = "both"
     out.osdEnabled = out.osdEnabled === true
     if (out.shortcut === undefined) out.shortcut = null
-    if (["global", "remember"].indexOf(String(out.applicationMode || "")) === -1)
-      out.applicationMode = "global"
+    var scope = String(out.layoutScope || "")
+    if (["global", "application", "window"].indexOf(scope) === -1)
+      scope = String(out.applicationMode || "") === "remember" ? "application" : "global"
+    out.layoutScope = scope
+    delete out.applicationMode
     if (!out.applicationLayouts || typeof out.applicationLayouts !== "object"
         || typeof out.applicationLayouts.length === "number") out.applicationLayouts = ({})
     if (!out.deviceOverrides || typeof out.deviceOverrides !== "object"

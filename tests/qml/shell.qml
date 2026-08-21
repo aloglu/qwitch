@@ -81,7 +81,7 @@ ShellRoot {
       displayMode: "both",
       osdEnabled: false,
       shortcut: null,
-      applicationMode: "global",
+      applicationMode: "remember",
       applicationLayouts: ({}),
       deviceOverrides: ({}),
       adoptedExistingConfig: true,
@@ -92,6 +92,8 @@ ShellRoot {
   function runSynchronousChecks() {
     subject.prepareDraft()
     subject.settingsPage = true
+    check(subject.draft.layoutScope === "application",
+      "legacy per-application settings must migrate in the panel")
 
     var fields = [subject._layoutCodeEditor, subject._variantEditor,
       subject._shortLabelEditor, subject._flagEditor]
@@ -112,9 +114,12 @@ ShellRoot {
 
     subject._displayModeSelector.changed("text")
     check(subject.draft.displayMode === "text", "button selection must update display mode")
-    subject._applicationModeSelector.changed("remember")
-    check(subject.draft.applicationMode === "remember",
+    subject._layoutScopeSelector.changed("application")
+    check(subject.draft.layoutScope === "application",
       "application scope selection must update the draft")
+    subject._layoutScopeSelector.changed("window")
+    check(subject.draft.layoutScope === "window",
+      "window scope selection must update the draft")
     check(subject.displayedShortcut() === "Not assigned",
       "a Hyprland shortcut must not masquerade as a qwitch shortcut")
     check(subject.nativeShortcutSummary() === "Alt + Shift",
@@ -129,6 +134,12 @@ ShellRoot {
       harness.check(mockHost.persisted !== null, "valid edits must auto-save")
       if (mockHost.persisted)
         harness.check(mockHost.persisted.layouts[0].label === "EN", "auto-save must persist edits")
+      if (mockHost.persisted) {
+        harness.check(mockHost.persisted.layoutScope === "window",
+          "auto-save must persist the new layout scope")
+        harness.check(mockHost.persisted.applicationMode === undefined,
+          "auto-save must drop the legacy scope field")
+      }
 
       subject._settingsViewport.contentY = Math.min(120,
         Math.max(0, subject._settingsViewport.contentHeight - subject._settingsViewport.height))

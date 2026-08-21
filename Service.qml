@@ -37,6 +37,8 @@ Item {
   property string lastError: ""
   property string shortcutConflict: ""
   property string activeApplicationId: ""
+  property string activeWindowId: ""
+  property var windowLayouts: ({})
   // Presentation preferences are safe to accept while the runtime service is
   // still draining its previous lease. Keeping them outside the mutation
   // queue makes the persisted OSD choice effective immediately after boot.
@@ -92,11 +94,14 @@ Item {
   property string _layoutOperation: ""
   property int _targetAfterApply: 0
   property bool _showOsdAfterSwitch: false
-  property bool _rememberApplicationAfterSwitch: false
+  property bool _rememberScopeAfterSwitch: false
   property string _switchApplicationId: ""
+  property string _switchWindowId: ""
   property bool _showOsdAfterExternalRefresh: false
   property int _externalRefreshPreviousIndex: -1
   property bool _externalRefreshPreviousMixed: false
+  property string _externalRefreshApplicationId: ""
+  property string _externalRefreshWindowId: ""
   property int _switchTarget: -1
   property var _switchPrevious: ({})
   property string _bindingOperation: ""
@@ -128,13 +133,42 @@ Item {
 
   function refreshActiveApplication() {
     activeApplicationId = applicationIdFor(ToplevelManager.activeToplevel)
-    if (settings.applicationMode === "remember" && activeApplicationId)
-      applicationLayoutTimer.restart()
+    if (settings.layoutScope === "application" && activeApplicationId)
+      rememberedLayoutTimer.restart()
+  }
+
+  function normalizeWindowId(value) {
+    var address = String(value || "").toLowerCase()
+    return address !== "0x0" && /^0x[0-9a-f]+$/.test(address) ? address : ""
+  }
+
+  function windowIdFor(toplevel) {
+    return normalizeWindowId(toplevel ? toplevel.address : "")
+  }
+
+  function refreshActiveWindow() {
+    activeWindowId = windowIdFor(Hyprland.activeToplevel)
+    if (settings.layoutScope === "window" && activeWindowId)
+      rememberedLayoutTimer.restart()
+  }
+
+  function pruneWindowLayouts() {
+    var live = ({})
+    var values = Hyprland.toplevels && Hyprland.toplevels.values
+      ? Hyprland.toplevels.values : []
+    for (var i = 0; i < values.length; i++) {
+      var windowId = windowIdFor(values[i])
+      if (windowId) live[windowId] = true
+    }
+    var current = windowLayouts || ({})
+    var next = ({})
+    for (var key in current) if (live[key]) next[key] = current[key]
+    if (JSON.stringify(next) !== JSON.stringify(current)) windowLayouts = next
   }
 
   function rememberApplicationLayout(index, applicationId) {
     var application = Model.normalizeApplicationId(applicationId || activeApplicationId)
-    if (settings.applicationMode !== "remember" || !application) return
+    if (settings.layoutScope !== "application" || !application) return
     var target = Number(index)
     if (!Number.isInteger(target) || target < 0 || target >= layouts.length) return
     var remembered = clone(settings.applicationLayouts, {})
@@ -152,15 +186,42 @@ Item {
       shell.updateEntryInline("io.github.aloglu.qwitch", candidate)
   }
 
-  function applyRememberedApplicationLayout() {
-    if (settings.applicationMode !== "remember" || !activeApplicationId) return
+  function rememberWindowLayout(index, windowId) {
+    var window = normalizeWindowId(windowId || activeWindowId)
+    if (settings.layoutScope !== "window" || !window) return
+    var target = Number(index)
+    if (!Number.isInteger(target) || target < 0 || target >= layouts.length) return
+    var remembered = clone(windowLayouts, {})
+    var key = Model.layoutKey(layouts[target])
+    if (!key || remembered[window] === key) return
+    remembered[window] = key
+    windowLayouts = Model.sanitizeLayoutMemories(remembered, layouts)
+  }
+
+  function rememberFocusedLayout(index, applicationId, windowId) {
+    if (settings.layoutScope === "application")
+      rememberApplicationLayout(index, applicationId)
+    else if (settings.layoutScope === "window")
+      rememberWindowLayout(index, windowId)
+  }
+
+  function applyRememberedLayout() {
+    var scope = String(settings.layoutScope || "global")
+    var identity = scope === "application" ? activeApplicationId
+      : scope === "window" ? activeWindowId : ""
+    if (!identity) return
     if (busy) {
-      applicationLayoutTimer.restart()
+      rememberedLayoutTimer.restart()
       return
     }
-    var target = Model.applicationLayoutIndex(settings.applicationLayouts,
-      activeApplicationId, layouts)
-    if (target < 0 || target === activeIndex) return
+    var memories = scope === "application" ? settings.applicationLayouts : windowLayouts
+    var target = Model.rememberedLayoutIndex(memories, identity, layouts)
+    if (target < 0) {
+      if (activeIndex >= 0)
+        rememberFocusedLayout(activeIndex, activeApplicationId, activeWindowId)
+      return
+    }
+    if (target === activeIndex) return
     switchTo(target, false, false)
   }
 
@@ -319,9 +380,10 @@ Item {
     _restoreAfterRefresh = false
     _restorePolicyAfterRefresh = false
     _switchAfterRefresh = -1
-    _rememberApplicationAfterSwitch = false
+    _rememberScopeAfterSwitch = false
     _switchApplicationId = ""
-    applicationLayoutTimer.stop()
+    _switchWindowId = ""
+    rememberedLayoutTimer.stop()
     _queuedSettings = null
     _layoutOperation = ""
     _bindingOperation = ""
@@ -425,7 +487,7 @@ Item {
     var previousLayouts = JSON.stringify(configuredLayouts)
     var previousOverrides = JSON.stringify(settings && settings.deviceOverrides ? settings.deviceOverrides : {})
     var previousShortcut = JSON.stringify(settings && settings.shortcut ? settings.shortcut : null)
-    var previousApplicationMode = String(settings && settings.applicationMode || "global")
+    var previousLayoutScope = String(settings && settings.layoutScope || "global")
     var previousApplicationLayouts = JSON.stringify(
       settings && settings.applicationLayouts ? settings.applicationLayouts : {})
     settings = next
@@ -438,13 +500,15 @@ Item {
     var overridesChanged = JSON.stringify(next.deviceOverrides || {}) !== previousOverrides
     var layoutsChanged = JSON.stringify(configuredLayouts) !== previousLayouts
     var shortcutChanged = JSON.stringify(next.shortcut || null) !== previousShortcut
-    var applicationBehaviorChanged = String(next.applicationMode || "global") !== previousApplicationMode
+    var scopeBehaviorChanged = String(next.layoutScope || "global") !== previousLayoutScope
       || JSON.stringify(next.applicationLayouts || {}) !== previousApplicationLayouts
+    if (layoutsChanged)
+      windowLayouts = Model.sanitizeLayoutMemories(windowLayouts, layouts)
     if (deferRuntime === true) {
       if (overridesChanged && Object.keys(_lastApplied).length > 0)
         _restorePolicyAfterRefresh = true
       if (shortcutChanged) _bindRefreshPending = true
-      if (applicationBehaviorChanged) applicationLayoutTimer.restart()
+      if (scopeBehaviorChanged) rememberedLayoutTimer.restart()
       return
     }
     if (overridesChanged && Object.keys(_lastApplied).length > 0) {
@@ -453,7 +517,7 @@ Item {
       reconcileRuntimeLayouts()
     }
     if (shortcutChanged) refreshBinds()
-    if (applicationBehaviorChanged) applicationLayoutTimer.restart()
+    if (scopeBehaviorChanged) rememberedLayoutTimer.restart()
   }
 
   function finishMutation() {
@@ -594,6 +658,8 @@ Item {
       payload = JSON.parse(_devicesOutput || "{}")
     } catch (error) {
       _showOsdAfterExternalRefresh = false
+      _externalRefreshApplicationId = ""
+      _externalRefreshWindowId = ""
       lastError = "Could not read Hyprland keyboards"
       finishDeviceRefresh()
       return
@@ -660,7 +726,13 @@ Item {
     var showExternalOsd = _showOsdAfterExternalRefresh
       && !mixedState && activeIndex >= 0
       && (_externalRefreshPreviousMixed || activeIndex !== _externalRefreshPreviousIndex)
+    var learnedApplicationId = _showOsdAfterExternalRefresh
+      ? _externalRefreshApplicationId : activeApplicationId
+    var learnedWindowId = _showOsdAfterExternalRefresh
+      ? _externalRefreshWindowId : activeWindowId
     _showOsdAfterExternalRefresh = false
+    _externalRefreshApplicationId = ""
+    _externalRefreshWindowId = ""
     maybeAdoptExistingConfig()
     if (_runtimeAwaitingFreshDevices && _activeDeviceRefreshSerial > _runtimeReadyAfterSerial) {
       _runtimeAwaitingFreshDevices = false
@@ -674,7 +746,8 @@ Item {
     // Native XKB group toggles and other compositor-side changes do not enter
     // switchTo(). Learn any coherent externally observed change independently
     // of whether its Hyprland event also requested an OSD notification.
-    if (learnedExternalLayout) root.rememberApplicationLayout(root.activeIndex)
+    if (learnedExternalLayout)
+      root.rememberFocusedLayout(root.activeIndex, learnedApplicationId, learnedWindowId)
     if (showExternalOsd) Qt.callLater(root.showLayoutOsd)
 
     if (_superseded) return
@@ -1069,7 +1142,7 @@ Item {
       + " or not owner or owner.token ~= " + token + " then error('qwitch_stale') end end"
   }
 
-  function switchTo(index, showOsd, rememberApplication) {
+  function switchTo(index, showOsd, rememberScope) {
     if (_superseded) {
       lastError = "A newer qwitch service owns the runtime state"
       return false
@@ -1127,8 +1200,9 @@ Item {
     _switchTarget = target
     _switchPrevious = previous
     _showOsdAfterSwitch = showOsd !== false
-    _rememberApplicationAfterSwitch = rememberApplication !== false
-    _switchApplicationId = _rememberApplicationAfterSwitch ? activeApplicationId : ""
+    _rememberScopeAfterSwitch = rememberScope !== false
+    _switchApplicationId = _rememberScopeAfterSwitch ? activeApplicationId : ""
+    _switchWindowId = _rememberScopeAfterSwitch ? activeWindowId : ""
     _layoutPipeline = true
     _actionError = ""
     var leaseIndexes = ({})
@@ -1332,9 +1406,11 @@ Item {
       busy: busy,
       error: lastError,
       shortcutConflict: shortcutConflict,
-      applicationMode: String(settings.applicationMode || "global"),
+      layoutScope: String(settings.layoutScope || "global"),
       activeApplicationId: activeApplicationId,
-      rememberedApplications: Object.keys(settings.applicationLayouts || {}).length
+      activeWindowId: activeWindowId,
+      rememberedApplications: Object.keys(settings.applicationLayouts || {}).length,
+      rememberedWindows: Object.keys(windowLayouts || {}).length
     })
   }
 
@@ -1482,6 +1558,9 @@ Item {
       if (exitCode === 0) root.consumeDeviceOutput()
       else {
         root.lastError = root.lastError || "hyprctl could not read input devices"
+        root._showOsdAfterExternalRefresh = false
+        root._externalRefreshApplicationId = ""
+        root._externalRefreshWindowId = ""
         root._restoreAfterRefresh = false
         root._switchAfterRefresh = -1
         root._layoutPipeline = false
@@ -1551,10 +1630,12 @@ Item {
       if (exitCode === 0) {
         root.lastError = ""
         root.updateDevicesAfterSwitch(root._switchTarget)
-        if (root._rememberApplicationAfterSwitch)
-          root.rememberApplicationLayout(root._switchTarget, root._switchApplicationId)
-        root._rememberApplicationAfterSwitch = false
+        if (root._rememberScopeAfterSwitch)
+          root.rememberFocusedLayout(root._switchTarget,
+            root._switchApplicationId, root._switchWindowId)
+        root._rememberScopeAfterSwitch = false
         root._switchApplicationId = ""
+        root._switchWindowId = ""
         if (root._showOsdAfterSwitch) root.showLayoutOsd()
         root._layoutPipeline = false
         root.refreshDevices()
@@ -1563,8 +1644,9 @@ Item {
       }
 
       root.lastError = root._actionError || "Could not switch every managed keyboard"
-      root._rememberApplicationAfterSwitch = false
+      root._rememberScopeAfterSwitch = false
       root._switchApplicationId = ""
+      root._switchWindowId = ""
       var rollback = root.switchBatch(root._switchPrevious)
       if (rollback) {
         var rollbackApplied = root.appliedAtIndexes(root._switchPrevious)
@@ -1650,6 +1732,7 @@ Item {
 
   Connections {
     target: Hyprland
+    function onActiveToplevelChanged() { root.refreshActiveWindow() }
     function onRawEvent(event) {
       if (!event || !event.name) return
       var name = String(event.name)
@@ -1660,6 +1743,8 @@ Item {
         root._postReloadBindSerial = root._bindRefreshSerial
         root._activeShortcut = null
         root._showOsdAfterExternalRefresh = false
+        root._externalRefreshApplicationId = ""
+        root._externalRefreshWindowId = ""
         root._adoptionAttempted = false
         root._nativeOptionReady = false
         if (!nativeOptionProcess.running) nativeOptionProcess.running = true
@@ -1669,10 +1754,20 @@ Item {
             && !root._layoutPipeline && !root._showOsdAfterExternalRefresh) {
           root._externalRefreshPreviousIndex = root.activeIndex
           root._externalRefreshPreviousMixed = root.mixedState
+          root._externalRefreshApplicationId = root.activeApplicationId
+          root._externalRefreshWindowId = root.activeWindowId
           root._showOsdAfterExternalRefresh = true
         }
         refreshTimer.restart()
       }
+    }
+  }
+
+  Connections {
+    target: Hyprland.toplevels
+    function onValuesChanged() {
+      root.pruneWindowLayouts()
+      root.refreshActiveWindow()
     }
   }
 
@@ -1694,9 +1789,9 @@ Item {
   }
 
   Timer {
-    id: applicationLayoutTimer
+    id: rememberedLayoutTimer
     interval: 120
-    onTriggered: root.applyRememberedApplicationLayout()
+    onTriggered: root.applyRememberedLayout()
   }
 
   Timer {
@@ -1765,6 +1860,8 @@ Item {
     refreshDevices()
     nativeOptionProcess.running = true
     Qt.callLater(root.refreshActiveApplication)
+    Qt.callLater(root.refreshActiveWindow)
+    Qt.callLater(root.pruneWindowLayouts)
   }
 
   onShellChanged: {

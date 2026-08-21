@@ -222,7 +222,8 @@ test('sanitizes and resolves per-application layout memory', () => {
     },
   });
 
-  assert.equal(clean.applicationMode, 'remember');
+  assert.equal(clean.layoutScope, 'application');
+  assert.equal(clean.applicationMode, undefined);
   assert.deepEqual(clean.applicationLayouts, {
     'org.alacritty': usKey,
     firefox: trKey,
@@ -233,7 +234,24 @@ test('sanitizes and resolves per-application layout memory', () => {
     'firefox', clean.layouts), 1);
   assert.equal(Model.applicationLayoutIndex(clean.applicationLayouts,
     'unknown', clean.layouts), -1);
-  assert.equal(Model.sanitizeSettings({ applicationMode: 'automatic' }).applicationMode, 'global');
+  assert.equal(Model.sanitizeSettings({ layoutScope: 'window' }).layoutScope, 'window');
+  assert.equal(Model.sanitizeSettings({ layoutScope: 'automatic' }).layoutScope, 'global');
+});
+
+test('keeps independent layout memories for live window identities', () => {
+  const layouts = [
+    { layout: 'us', variant: '', label: 'EN', flag: '' },
+    { layout: 'tr', variant: '', label: 'TR', flag: '' },
+  ];
+  const memories = Model.sanitizeLayoutMemories({
+    '0xabc': Model.layoutKey(layouts[0]),
+    '0xdef': Model.layoutKey(layouts[1]),
+    '0x0': 'missing',
+  }, layouts);
+
+  assert.equal(Model.rememberedLayoutIndex(memories, '0xabc', layouts), 0);
+  assert.equal(Model.rememberedLayoutIndex(memories, '0xdef', layouts), 1);
+  assert.equal(Model.rememberedLayoutIndex(memories, '0x123', layouts), -1);
 });
 
 test('reads native Hyprland XKB options and labels common group toggles', () => {

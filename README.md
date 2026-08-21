@@ -10,7 +10,7 @@ layout and shortcut changes in the running Hyprland session.
   save automatically through Omarchy's shell configuration API.
 - Switch every safely managed typing keyboard from the panel or an optional
   recorded shortcut.
-- Optionally remember the last layout used by each focused application, while
+- Optionally remember layouts per application or per live window, while
   keeping one global layout as the default behavior.
 - Show a label, Unicode flag, or both in the bar.
 - Optionally show the same representation through Omarchy's OSD.
@@ -40,6 +40,11 @@ Switching back to **Global** stops focus-driven restores without discarding
 application memories. Every bar instance reads the active layout from qwitch's
 singleton service, so a focus-driven restore updates the displayed bar layout
 on every monitor at the same time.
+
+On multi-monitor systems, scope follows Hyprland's single keyboard-focused
+window regardless of which monitor contains it. Moving focus to a remembered
+window on another monitor restores that window's app or window layout, and all
+qwitch bar instances display the resulting active keyboard layout.
 
 ## Install
 

@@ -652,6 +652,14 @@ function normalizeApplicationId(value) {
     return result;
 }
 
+function normalizeWindowAddress(value) {
+    var match = /^(?:0x)?([0-9a-f]{1,16})$/i.exec(trimmed(value));
+    if (!match)
+        return "";
+    var address = match[1].toLowerCase().replace(/^0+/, "");
+    return address ? "0x" + address : "";
+}
+
 function sanitizeLayoutMemories(value, layouts) {
     var result = {};
     if (!isObject(value))
@@ -1095,6 +1103,7 @@ var exported = {
     firstGroupToggle: firstGroupToggle,
     nativeXkbShortcutLabel: nativeXkbShortcutLabel,
     normalizeApplicationId: normalizeApplicationId,
+    normalizeWindowAddress: normalizeWindowAddress,
     sanitizeLayoutMemories: sanitizeLayoutMemories,
     sanitizeApplicationLayouts: sanitizeApplicationLayouts,
     rememberedLayoutIndex: rememberedLayoutIndex,

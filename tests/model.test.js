@@ -252,6 +252,11 @@ test('keeps independent layout memories for live window identities', () => {
   assert.equal(Model.rememberedLayoutIndex(memories, '0xabc', layouts), 0);
   assert.equal(Model.rememberedLayoutIndex(memories, '0xdef', layouts), 1);
   assert.equal(Model.rememberedLayoutIndex(memories, '0x123', layouts), -1);
+  assert.equal(Model.normalizeWindowAddress('557926f25050'), '0x557926f25050');
+  assert.equal(Model.normalizeWindowAddress('0x557926F25050'), '0x557926f25050');
+  assert.equal(Model.normalizeWindowAddress('00000000000000ab'), '0xab');
+  assert.equal(Model.normalizeWindowAddress('0x0'), '');
+  assert.equal(Model.normalizeWindowAddress('not-an-address'), '');
 });
 
 test('reads native Hyprland XKB options and labels common group toggles', () => {

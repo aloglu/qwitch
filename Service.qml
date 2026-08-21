@@ -138,8 +138,7 @@ Item {
   }
 
   function normalizeWindowId(value) {
-    var address = String(value || "").toLowerCase()
-    return address !== "0x0" && /^0x[0-9a-f]+$/.test(address) ? address : ""
+    return Model.normalizeWindowAddress(value)
   }
 
   function windowIdFor(toplevel) {

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.aloglu.qwitch",
   "name": "qwitch",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "author": "Abdullah Aloğlu",
   "license": "MIT",
   "description": "A minimal, device-aware keyboard layout switcher for the Omarchy bar.",

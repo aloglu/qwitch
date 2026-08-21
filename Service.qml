@@ -130,32 +130,47 @@ Item {
   // qwitch renders its own OSD for manual switches and no OSD for automatic
   // restores. Correlate the compositor events produced by those operations so
   // a delayed activelayout notification is never mistaken for an external one.
+  function normalizeKeymapName(value) {
+    return String(value || "").trim().replace(/\s+/g, " ").toLowerCase()
+  }
+
+  function keymapNameForLayout(index) {
+    var target = Number(index)
+    if (!Number.isInteger(target) || target < 0 || target >= layouts.length) return ""
+    var layout = layouts[target]
+    for (var i = 0; i < catalog.length; i++) {
+      var candidate = catalog[i]
+      if (candidate && candidate.layout === layout.layout
+          && String(candidate.variant || "") === String(layout.variant || ""))
+        return normalizeKeymapName(candidate.description || "")
+    }
+    return ""
+  }
+
   function armInternalLayoutEvents(indexByName) {
-    var pending = clone(_internalLayoutEvents, {})
-    var deadline = Date.now() + 2000
+    var names = ({})
+    var keymaps = ({})
     for (var name in indexByName) {
       if (!safeDeviceName(name)) continue
-      var existing = pending[name] || ({})
-      pending[name] = {
-        count: Math.max(0, Number(existing.count || 0)) + 1,
-        deadline: deadline
-      }
+      names[name] = true
+      var keymap = keymapNameForLayout(indexByName[name])
+      if (keymap) keymaps[keymap] = true
     }
-    _internalLayoutEvents = pending
-    if (Object.keys(pending).length > 0) internalLayoutEventTimer.restart()
+    _internalLayoutEvents = {
+      names: names,
+      keymaps: keymaps,
+      deadline: Date.now() + 2000
+    }
+    internalLayoutEventTimer.restart()
   }
 
   function clearExpiredInternalLayoutEvents() {
     var current = _internalLayoutEvents || ({})
-    var next = ({})
-    var now = Date.now()
-    for (var name in current) {
-      var entry = current[name] || ({})
-      if (Number(entry.count || 0) > 0 && Number(entry.deadline || 0) > now)
-        next[name] = entry
+    if (Number(current.deadline || 0) > Date.now()) {
+      internalLayoutEventTimer.restart()
+      return
     }
-    _internalLayoutEvents = next
-    if (Object.keys(next).length > 0) internalLayoutEventTimer.restart()
+    _internalLayoutEvents = ({})
   }
 
   function consumeInternalLayoutEvent(event) {
@@ -163,19 +178,24 @@ Item {
     var argumentsList = event.parse(2)
     var name = argumentsList && argumentsList.length > 0
       ? String(argumentsList[0] || "") : ""
-    var pending = clone(_internalLayoutEvents, {})
-    var entry = pending[name]
-    if (!entry || Number(entry.count || 0) <= 0
-        || Number(entry.deadline || 0) <= Date.now()) {
+    var keymap = argumentsList && argumentsList.length > 1
+      ? normalizeKeymapName(argumentsList[1]) : ""
+    var pending = _internalLayoutEvents || ({})
+    if (Number(pending.deadline || 0) <= Date.now()) {
       clearExpiredInternalLayoutEvents()
       return false
     }
-    entry.count = Number(entry.count) - 1
-    if (entry.count > 0) pending[name] = entry
-    else delete pending[name]
-    _internalLayoutEvents = pending
-    if (Object.keys(pending).length === 0) internalLayoutEventTimer.stop()
-    return true
+    if (keymap) {
+      if (pending.keymaps && pending.keymaps[keymap]) return true
+    } else if (pending.names && pending.names[name]) {
+      return true
+    }
+
+    // A different keymap within the correlation window is a genuine external
+    // switch. End correlation immediately so later events remain observable.
+    _internalLayoutEvents = ({})
+    internalLayoutEventTimer.stop()
+    return false
   }
 
   function applicationIdFor(toplevel) {
@@ -1465,7 +1485,7 @@ Item {
       activeWindowId: activeWindowId,
       rememberedApplications: Object.keys(settings.applicationLayouts || {}).length,
       rememberedWindows: Object.keys(windowLayouts || {}).length,
-      pendingInternalLayoutEvents: Object.keys(_internalLayoutEvents || {}).length
+      pendingInternalLayoutEvents: Number((_internalLayoutEvents || {}).deadline || 0) > Date.now()
     })
   }
 

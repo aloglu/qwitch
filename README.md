@@ -49,8 +49,9 @@ qwitch bar instances display the resulting active keyboard layout.
 Automatic app- and window-scope restores are silent. The OSD preference applies
 only to layout changes initiated by the user, including qwitch controls and a
 native XKB group-toggle shortcut. qwitch correlates compositor layout events
-with its own switch operations so a delayed self-generated event cannot produce
-a second OSD notification.
+with the XKB keymap targeted by its own switch operations. This also covers
+duplicate events mirrored through an input-method virtual keyboard, so a
+self-generated event cannot produce a second OSD notification.
 
 ## Install
 

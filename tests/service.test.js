@@ -8,6 +8,7 @@ const servicePath = path.join(projectRoot, "Service.qml")
 const service = fs.readFileSync(servicePath, "utf8")
 const panel = fs.readFileSync(path.join(projectRoot, "Panel.qml"), "utf8")
 const barWidget = fs.readFileSync(path.join(projectRoot, "BarWidget.qml"), "utf8")
+const readme = fs.readFileSync(path.join(projectRoot, "README.md"), "utf8")
 
 test("project branding consistently uses lowercase qwitch", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"))
@@ -127,7 +128,8 @@ test("settings auto-save and layout selection adds immediately", () => {
   assert.match(panel, /onTriggered: root\.saveSettings\(\)/)
   assert.match(panel, /root\.addSelectedCatalogLayout\(\)/)
   assert.doesNotMatch(panel, /text: .*"Save"/)
-  assert.match(panel, /model: root\.visibleDevices/)
+  assert.match(panel, /model: root\.typingDevices/)
+  assert.match(panel, /model: root\.advancedDevicesVisible \? root\.advancedDevices : \[\]/)
 })
 
 test("device override draft can visibly return a saved override to automatic", () => {
@@ -156,6 +158,21 @@ test("panel headers and mixed control rows use compact aligned geometry", () => 
   assert.match(panel, /id: moveUpButton[\s\S]*anchors\.verticalCenter: parent\.verticalCenter/)
   assert.match(panel, /Grid\s*\{[\s\S]*readonly property real fieldWidth: \(width - columnSpacing\) \/ 2/)
   assert.equal((panel.match(/width: parent\.fieldWidth/g) || []).length, 4)
+  assert.equal((panel.match(/hoverEnabled: false/g) || []).length, 5)
+  assert.match(panel, /id: displayModeGroup[\s\S]*showLabel: false/)
+})
+
+test("typing keyboards appear before the advanced device controls", () => {
+  const typingList = panel.indexOf("model: root.typingDevices")
+  const advancedToggle = panel.indexOf("id: advancedDevicesButton")
+  const advancedList = panel.indexOf("model: root.advancedDevicesVisible ? root.advancedDevices : []")
+  assert.ok(typingList >= 0 && advancedToggle > typingList && advancedList > advancedToggle)
+})
+
+test("README documents plugin updates and stale-shell recovery", () => {
+  assert.match(readme, /omarchy plugin update io\.github\.aloglu\.qwitch/)
+  assert.match(readme, /omarchy restart shell/)
+  assert.match(readme, /fast-forward/i)
 })
 
 test("settings reopen at the top and show an adopted native shortcut inline", () => {

@@ -45,6 +45,21 @@ The local URL is still installed with `git clone`, so it contains committed
 amend or otherwise rewrite a revision that is already installed, remove and
 re-add the plugin; Omarchy plugin updates are fast-forward-only.
 
+## Update
+
+Pull the latest committed version into Omarchy's managed plugin checkout, then
+restart the shell so every loaded QML component is rebuilt from that revision:
+
+```sh
+omarchy plugin update io.github.aloglu.qwitch
+omarchy restart shell
+```
+
+The shell normally detects plugin files automatically, but a restart is the
+reliable way to clear a stale panel or widget after an update. If the installed
+revision was amended or rebased, remove and add the plugin again because the
+updater intentionally accepts only fast-forward changes.
+
 qwitch does not force a bar position. Place or move it with Omarchy's normal bar
 customization tools. Left-click the widget to switch to the next layout;
 right-click it to open the layout menu, whose gear opens settings.

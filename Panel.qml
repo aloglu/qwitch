@@ -111,8 +111,6 @@ Panel {
   readonly property var advancedDevices: root.detectedDevices.filter(function(device) {
     return String(device.category || "") !== "keyboard"
   })
-  readonly property var visibleDevices: root.advancedDevicesVisible
-    ? root.typingDevices.concat(root.advancedDevices) : root.typingDevices
   function prepareDraft() {
     root.draftReady = false
     var source = objectFrom(root.settings)
@@ -915,7 +913,7 @@ Panel {
                   text: "Layout code  󰋼"
                   color: Qt.darker(root.contentForeground, 1.4)
                   font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.bodySmall
                   HoverHandler { id: layoutCodeHelp }
                   PanelToolTip {
                     visible: layoutCodeHelp.hovered
@@ -925,11 +923,14 @@ Panel {
                 }
                 TextField {
                   width: parent.width
+                  height: Style.spacing.controlHeight
                   text: root.layoutAt(root.editingLayoutIndex).layout
                   placeholderText: "us"
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.subtitle
+                  hoverEnabled: false
                   activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "layout", text)
                 }
@@ -942,7 +943,7 @@ Panel {
                   text: "Variant  󰋼"
                   color: Qt.darker(root.contentForeground, 1.4)
                   font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.bodySmall
                   HoverHandler { id: variantHelp }
                   PanelToolTip {
                     visible: variantHelp.hovered
@@ -952,11 +953,14 @@ Panel {
                 }
                 TextField {
                   width: parent.width
+                  height: Style.spacing.controlHeight
                   text: root.layoutAt(root.editingLayoutIndex).variant
                   placeholderText: "Optional"
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.subtitle
+                  hoverEnabled: false
                   activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "variant", text)
                 }
@@ -968,7 +972,7 @@ Panel {
                   text: "Short label  󰋼"
                   color: Qt.darker(root.contentForeground, 1.4)
                   font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.bodySmall
                   HoverHandler { id: shortLabelHelp }
                   PanelToolTip {
                     visible: shortLabelHelp.hovered
@@ -978,11 +982,14 @@ Panel {
                 }
                 TextField {
                   width: parent.width
+                  height: Style.spacing.controlHeight
                   text: root.layoutAt(root.editingLayoutIndex).label
                   placeholderText: "EN"
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.subtitle
+                  hoverEnabled: false
                   activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "label", text)
                 }
@@ -995,7 +1002,7 @@ Panel {
                   text: "Flag emoji  󰋼"
                   color: Qt.darker(root.contentForeground, 1.4)
                   font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.bodySmall
                   HoverHandler { id: flagHelp }
                   PanelToolTip {
                     visible: flagHelp.hovered
@@ -1005,11 +1012,14 @@ Panel {
                 }
                 TextField {
                   width: parent.width
+                  height: Style.spacing.controlHeight
                   text: root.layoutAt(root.editingLayoutIndex).flag
                   placeholderText: "🇺🇸"
                   foreground: root.contentForeground
                   accent: root.contentAccent
                   font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.subtitle
+                  hoverEnabled: false
                   activeFocusOnPress: true
                   onTextEdited: root.updateLayout(root.editingLayoutIndex, "flag", text)
                 }
@@ -1039,10 +1049,12 @@ Panel {
               font.pixelSize: Style.font.body
             }
 
-            ButtonGroup {
+            Dropdown {
               id: displayModeGroup
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
+              width: Style.spacing.dropdownWidth
+              showLabel: false
               options: [
                 { value: "text", label: "Text" },
                 { value: "flag", label: "Flag" },
@@ -1115,6 +1127,8 @@ Panel {
               foreground: root.contentForeground
               accent: root.contentAccent
               font.family: root.contentFontFamily
+              font.pixelSize: Style.font.subtitle
+              hoverEnabled: false
               Keys.priority: Keys.BeforeItem
               Keys.onPressed: function(event) { root.recordShortcut(event) }
             }
@@ -1127,6 +1141,7 @@ Panel {
               foreground: root.contentForeground
               accent: root.contentAccent
               fontFamily: root.contentFontFamily
+              fontSize: Style.font.subtitle
               height: parent.height
               anchors.right: clearShortcutButton.left
               anchors.rightMargin: Style.space(6)
@@ -1225,27 +1240,14 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          Button {
-            visible: root.advancedDevices.length > 0
-            width: parent.width
-            text: (root.advancedDevicesVisible ? "Hide" : "Show") + " advanced devices ("
-              + root.advancedDevices.length + ")"
-            iconText: root.advancedDevicesVisible ? "󰅃" : "󰅀"
-            leftAlign: true
-            bordered: true
-            focusable: true
-            foreground: root.contentForeground
-            accent: root.contentAccent
-            fontFamily: root.contentFontFamily
-            onClicked: root.advancedDevicesVisible = !root.advancedDevicesVisible
-          }
+          Component {
+            id: deviceEditorDelegate
 
-          Repeater {
-            model: root.visibleDevices
-
-            delegate: Column {
+            Column {
               required property var modelData
               required property int index
+              readonly property bool advancedEntry:
+                String(modelData.category || "") !== "keyboard"
               width: settingsColumn.width
               spacing: Style.space(5)
 
@@ -1319,10 +1321,38 @@ Panel {
               }
 
               PanelSeparator {
-                visible: index < root.visibleDevices.length - 1
+                visible: index < (parent.advancedEntry
+                  ? root.advancedDevices.length : root.typingDevices.length) - 1
                 foreground: root.contentForeground
               }
             }
+          }
+
+          Repeater {
+            model: root.typingDevices
+            delegate: deviceEditorDelegate
+          }
+
+          Button {
+            id: advancedDevicesButton
+            visible: root.advancedDevices.length > 0
+            width: parent.width
+            text: (root.advancedDevicesVisible ? "Hide" : "Show") + " advanced devices ("
+              + root.advancedDevices.length + ")"
+            iconText: root.advancedDevicesVisible ? "󰅃" : "󰅀"
+            leftAlign: true
+            bordered: true
+            focusable: true
+            foreground: root.contentForeground
+            accent: root.contentAccent
+            fontFamily: root.contentFontFamily
+            fontSize: Style.font.subtitle
+            onClicked: root.advancedDevicesVisible = !root.advancedDevicesVisible
+          }
+
+          Repeater {
+            model: root.advancedDevicesVisible ? root.advancedDevices : []
+            delegate: deviceEditorDelegate
           }
 
           Text {

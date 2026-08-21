@@ -120,10 +120,24 @@ ShellRoot {
     subject._layoutScopeSelector.changed("window")
     check(subject.draft.layoutScope === "window",
       "window scope selection must update the draft")
-    check(subject.displayedShortcut() === "Not assigned",
-      "a Hyprland shortcut must not masquerade as a qwitch shortcut")
+    check(subject.displayedShortcut() === "Alt + Shift",
+      "the adopted native shortcut must be the authoritative layout shortcut")
     check(subject.nativeShortcutSummary() === "Alt + Shift",
-      "the detected Hyprland shortcut must remain visible separately")
+      "the detected Hyprland shortcut must remain visible")
+    subject._nativeShortcutSelector.changed("grp:ctrl_alt_toggle")
+    check(subject.draft.nativeXkbOption === "grp:ctrl_alt_toggle"
+      && subject.draft.shortcut === null,
+      "choosing a native shortcut must replace the custom shortcut source")
+    subject.capturingShortcut = true
+    var modifierEvent = {
+      key: Qt.Key_Shift,
+      modifiers: Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier,
+      accepted: false
+    }
+    subject.recordShortcut(modifierEvent)
+    check(subject.shortcutError.indexOf("Ctrl + Alt + Shift is not available") >= 0,
+      "an unsupported modifier-only chord must explain why it cannot be recorded")
+    subject.capturingShortcut = false
   }
 
   Timer {

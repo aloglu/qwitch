@@ -266,6 +266,11 @@ test('reads native Hyprland XKB options and labels common group toggles', () => 
   assert.equal(Model.firstGroupToggle('caps:escape,grp:alt_shift_toggle'), 'grp:alt_shift_toggle');
   assert.equal(Model.nativeXkbShortcutLabel('grp:alt_shift_toggle'), 'Alt + Shift');
   assert.equal(Model.nativeXkbShortcutLabel('grp:win_space_toggle'), 'Super + Space');
+  assert.equal(Model.nativeXkbShortcutLabel('grp:ctrl_alt_toggle'), 'Ctrl + Alt');
+  assert.equal(Model.withoutGroupToggle('compose:caps,grp:alt_shift_toggle,shift:both_capslock_cancel'),
+    'compose:caps,shift:both_capslock_cancel');
+  assert.equal(Model.withGroupToggle('compose:caps,grp:alt_shift_toggle', 'grp:ctrl_alt_toggle'),
+    'compose:caps,grp:ctrl_alt_toggle');
   assert.equal(Model.firstGroupToggle('caps:escape'), '');
 
   const adopted = Model.sanitizeSettings({
@@ -275,6 +280,11 @@ test('reads native Hyprland XKB options and labels common group toggles', () => 
   assert.equal(adopted.adoptedExistingConfig, true);
   assert.equal(adopted.nativeXkbOption, 'grp:ctrl_shift_toggle');
   assert.equal(Model.sanitizeSettings({ nativeXkbOption: 'compose:ralt' }).nativeXkbOption, '');
+  assert.equal(Model.sanitizeSettings({ nativeXkbOption: 'grp:ctrl_alt_shift_toggle' }).nativeXkbOption, '');
+  assert.equal(Model.sanitizeSettings({
+    shortcut: { modifiers: ['SUPER'], key: 'K', code: 37 },
+    nativeXkbOption: 'grp:alt_shift_toggle',
+  }).nativeXkbOption, '');
 });
 
 test('formats text, flags and fallbacks without leaving an empty widget', () => {

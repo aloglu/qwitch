@@ -59,6 +59,7 @@ BarWidget {
         || typeof out.deviceOverrides.length === "number") out.deviceOverrides = ({})
     out.adoptedExistingConfig = out.adoptedExistingConfig === true
     out.nativeXkbOption = String(out.nativeXkbOption || "")
+    if (out.shortcut) out.nativeXkbOption = ""
     return out
   }
 

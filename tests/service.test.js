@@ -9,6 +9,7 @@ const service = fs.readFileSync(servicePath, "utf8")
 const panel = fs.readFileSync(path.join(projectRoot, "Panel.qml"), "utf8")
 const barWidget = fs.readFileSync(path.join(projectRoot, "BarWidget.qml"), "utf8")
 const readme = fs.readFileSync(path.join(projectRoot, "README.md"), "utf8")
+const runtimeHelper = fs.readFileSync(path.join(projectRoot, "qwitch-runtime"), "utf8")
 
 test("project branding consistently uses lowercase qwitch", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "manifest.json"), "utf8"))
@@ -105,7 +106,8 @@ test("first run adopts existing Hyprland layouts and the native group toggle", (
   assert.match(service, /candidate\.adoptedExistingConfig = true/)
   assert.match(service, /Model\.firstGroupToggle\(Model\.parseHyprOptionString/)
   assert.match(service, /"input:kb_options"/)
-  assert.match(service, /settings\.nativeXkbOption[\s\S]*!== detectedShortcut/)
+  assert.match(service, /candidate\.nativeXkbOption = detectedShortcut/)
+  assert.match(service, /detectedNativeXkbOption: Model\.firstGroupToggle/)
   assert.match(service, /nativeOptionProcess\.running = true/)
   assert.match(service, /shell\.updateEntryInline\("io\.github\.aloglu\.qwitch", candidate\)/)
 })
@@ -189,15 +191,30 @@ test("README documents plugin updates and stale-shell recovery", () => {
   assert.match(readme, /fast-forward/i)
 })
 
-test("settings reopen at the top and distinguish shortcut ownership", () => {
+test("settings reopen at the top and present one authoritative shortcut", () => {
   assert.match(panel, /function displayedShortcut\(\)/)
-  assert.match(panel, /Hyprland shortcut · /)
-  assert.match(panel, /text: "qwitch shortcut"/)
-  assert.match(panel, /Both shortcut sources are configured:/)
+  assert.match(panel, /text: "Layout shortcut"/)
+  assert.match(panel, /id: nativeShortcutDropdown/)
+  assert.match(panel, /root\.chooseNativeShortcut\(value\)/)
+  assert.match(panel, /chooseRecordedShortcut\(shortcut\)/)
+  assert.match(panel, /Ctrl \+ Alt \+ Shift is not available as an XKB layout toggle/)
+  assert.doesNotMatch(panel, /Both shortcut sources are configured:/)
   assert.match(panel, /settingsScroll\.contentY = 0/)
   assert.match(panel, /text: "qwitch: Settings"/)
   assert.match(panel, /text: "qwitch: Layouts"/)
   assert.doesNotMatch(panel, /Changes save automatically/i)
+})
+
+test("shortcut ownership replaces only the live XKB group toggle", () => {
+  assert.match(service, /Model\.withoutGroupToggle\(_baselineKbOptions\)/)
+  assert.match(service, /Model\.withGroupToggle\(_baselineKbOptions, settings\.nativeXkbOption\)/)
+  assert.match(service, /hl\.config\(\{ input = \{ kb_options = /)
+  assert.match(service, /kbOptions: kbOptionsValue === undefined/)
+  assert.match(service, /_mayOwnShortcut \|\| _mayOwnKbOptions/)
+  assert.match(runtimeHelper, /\.kbOptions\.baseline/)
+  assert.match(runtimeHelper, /any\(\.owned\[\]; \. == \$current\)/)
+  assert.match(runtimeHelper, /kb_options = \$kb_baseline_q/)
+  assert.match(readme, /does not edit `~\/\.config\/hypr`/)
 })
 
 test("OSD is an all-or-nothing view of authoritative layout changes", () => {

@@ -21,6 +21,10 @@ if [[ \${1:-} == -j && \${2:-} == devices ]]; then
   /usr/bin/cat "$FAKE_DEVICES"
   exit 0
 fi
+if [[ \${1:-} == -j && \${2:-} == getoption && \${3:-} == input:kb_options ]]; then
+  printf '{"str":%s}\n' "$(/usr/bin/jq -Rn --arg value "\${FAKE_KB_OPTIONS:-}" '$value')"
+  exit 0
+fi
 if [[ \${1:-} == eval && \${FAKE_UNBIND_FAIL:-0} == 1 && $* == *handle:unbind* ]]; then
   printf 'simulated unbind failure\\n' >&2
   exit 1
@@ -41,7 +45,8 @@ exit 0
     qwitch_test_disable_guardian: "1",
     HYPRLAND_INSTANCE_SIGNATURE: "fake-hypr",
     FAKE_LOG: log,
-    FAKE_DEVICES: devices
+    FAKE_DEVICES: devices,
+    FAKE_KB_OPTIONS: ""
   }
   return { root, log, devices, proc, env }
 }
@@ -193,6 +198,62 @@ test("binding cleanup is guarded by the exact lease token", () => {
   assert.match(log, /__qwitch_owned_binding/)
   assert.match(log, /binding\.token == "qwitch-200-test"/)
   assert.match(log, /handle:unbind/)
+})
+
+test("cleanup restores qwitch-owned XKB options without editing config files", () => {
+  const ctx = setup()
+  const state = lease({
+    devices: [],
+    kbOptions: {
+      baseline: "compose:caps,grp:alt_shift_toggle",
+      owned: ["compose:caps,grp:ctrl_alt_toggle"]
+    }
+  })
+  assert.equal(arm(ctx, state).status, 0)
+  const cleaned = run(ctx, ["cleanup-now", state.leaseId], {
+    FAKE_KB_OPTIONS: state.kbOptions.owned[0]
+  })
+  assert.equal(cleaned.status, 0, cleaned.stderr)
+  const log = fs.readFileSync(ctx.log, "utf8")
+  assert.match(log, /kb_options = "compose:caps,grp:alt_shift_toggle"/)
+})
+
+test("cleanup leaves externally changed XKB options untouched", () => {
+  const ctx = setup()
+  const state = lease({
+    devices: [],
+    kbOptions: {
+      baseline: "compose:caps,grp:alt_shift_toggle",
+      owned: ["compose:caps,grp:ctrl_alt_toggle"]
+    }
+  })
+  assert.equal(arm(ctx, state).status, 0)
+  assert.equal(run(ctx, ["cleanup-now", state.leaseId], {
+    FAKE_KB_OPTIONS: "compose:ralt,grp:win_space_toggle"
+  }).status, 0)
+  const cleanupLog = fs.readFileSync(ctx.log, "utf8").split("\n").slice(1).join("\n")
+  assert.doesNotMatch(cleanupLog, /hl\.config.*kb_options/)
+})
+
+test("cleanup recognizes either qwitch-owned value during an XKB transition", () => {
+  const ctx = setup()
+  const state = lease({
+    devices: [],
+    kbOptions: {
+      baseline: "compose:caps,grp:alt_shift_toggle",
+      owned: [
+        "compose:caps,grp:ctrl_alt_toggle",
+        "compose:caps,grp:ctrl_shift_toggle"
+      ]
+    }
+  })
+  assert.equal(arm(ctx, state).status, 0)
+  const cleaned = run(ctx, ["cleanup-now", state.leaseId], {
+    FAKE_KB_OPTIONS: state.kbOptions.owned[1]
+  })
+  assert.equal(cleaned.status, 0, cleaned.stderr)
+  const log = fs.readFileSync(ctx.log, "utf8")
+  assert.match(log, /kb_options = "compose:caps,grp:alt_shift_toggle"/)
 })
 
 test("successor drain retires the old lease before it can claim", () => {

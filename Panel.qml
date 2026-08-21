@@ -57,6 +57,15 @@ Panel {
   property alias _flagEditor: flagField
   property alias _displayModeSelector: displayModeGroup
   property alias _layoutScopeSelector: layoutScopeGroup
+  property alias _nativeShortcutSelector: nativeShortcutDropdown
+  readonly property var nativeShortcutOptions: [{
+    value: "",
+    label: root.draft.shortcut
+      ? "Custom shortcut selected"
+      : root.service && String(root.service.detectedNativeXkbOption || "")
+      ? "Use input.lua · " + String(root.service.nativeShortcutLabel || "Detected shortcut")
+      : "No native modifier shortcut"
+  }].concat(Model.nativeXkbShortcutOptions())
   property var draft: ({
     layouts: [],
     displayMode: "both",
@@ -156,7 +165,7 @@ Panel {
       applicationLayouts: clone(objectFrom(source.applicationLayouts), ({})),
       deviceOverrides: clone(objectFrom(source.deviceOverrides), ({})),
       adoptedExistingConfig: source.adoptedExistingConfig === true,
-      nativeXkbOption: String(source.nativeXkbOption || "")
+      nativeXkbOption: source.shortcut ? "" : String(source.nativeXkbOption || "")
     }
     root.editingLayoutIndex = normalized.length > 0 ? 0 : -1
     root.selectedCatalogValue = ""
@@ -271,7 +280,7 @@ Panel {
       applicationLayouts: clone(objectFrom(root.draft.applicationLayouts), ({})),
       deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
       adoptedExistingConfig: root.draft.adoptedExistingConfig === true,
-      nativeXkbOption: String(root.draft.nativeXkbOption || "")
+      nativeXkbOption: root.draft.shortcut ? "" : String(root.draft.nativeXkbOption || "")
     }
     root.editingLayoutIndex = selectedIndex
     root.draftError = ""
@@ -435,16 +444,36 @@ Panel {
   }
 
   function displayedShortcut() {
-    return root.shortcutSummary(root.draft.shortcut)
+    if (root.draft.shortcut) return root.shortcutSummary(root.draft.shortcut)
+    var nativeLabel = root.nativeShortcutSummary()
+    return nativeLabel || "Not assigned"
   }
 
   function nativeShortcutSummary() {
     var nativeOption = String(root.draft.nativeXkbOption || "")
-    if (!nativeOption) return "No group-toggle shortcut detected"
-    var label = root.service
-      ? String(root.service.nativeShortcutLabel || "")
-      : String(Model.nativeXkbShortcutLabel(nativeOption) || "")
+    if (!nativeOption && root.service)
+      return String(root.service.nativeShortcutLabel || "")
+    if (!nativeOption) return ""
+    var label = String(Model.nativeXkbShortcutLabel(nativeOption) || "")
     return label || nativeOption
+  }
+
+  function chooseNativeShortcut(option) {
+    root.capturingShortcut = false
+    root.shortcutError = ""
+    var next = clone(root.draft, ({}))
+    next.shortcut = null
+    next.nativeXkbOption = String(option || "")
+    root.draft = next
+    root.scheduleAutoSave()
+  }
+
+  function chooseRecordedShortcut(shortcut) {
+    var next = clone(root.draft, ({}))
+    next.shortcut = clone(shortcut, null)
+    next.nativeXkbOption = ""
+    root.draft = next
+    root.scheduleAutoSave()
   }
 
   function isModifierKey(key) {
@@ -500,6 +529,12 @@ Panel {
       return
     }
     if (isModifierKey(event.key)) {
+      var tripleModifier = (event.modifiers & Qt.ControlModifier)
+        && (event.modifiers & Qt.AltModifier)
+        && (event.modifiers & Qt.ShiftModifier)
+      root.shortcutError = tripleModifier
+        ? "Ctrl + Alt + Shift is not available as an XKB layout toggle. Choose one of the supported native shortcuts below."
+        : "For a custom shortcut, keep holding the modifiers and press a regular key. For a modifier-only shortcut, choose a native XKB option below."
       event.accepted = true
       return
     }
@@ -520,7 +555,7 @@ Panel {
     if (error) {
       root.shortcutError = error
     } else {
-      setDraftValue("shortcut", shortcut)
+      chooseRecordedShortcut(shortcut)
       root.shortcutError = ""
       root.capturingShortcut = false
     }
@@ -581,7 +616,7 @@ Panel {
         root.draft.applicationLayouts, layouts),
       deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
       adoptedExistingConfig: true,
-      nativeXkbOption: String(root.draft.nativeXkbOption || "")
+      nativeXkbOption: root.draft.shortcut ? "" : String(root.draft.nativeXkbOption || "")
     }
 
     root.hostWidget.persistSettings(candidate)
@@ -1191,20 +1226,32 @@ Panel {
 
           Text {
             width: parent.width
-            text: "Hyprland shortcut · " + root.nativeShortcutSummary()
-            color: Qt.darker(root.contentForeground, 1.25)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-          }
-
-          Text {
-            width: parent.width
-            text: "qwitch shortcut"
+            text: "Layout shortcut"
             color: Qt.darker(root.contentForeground, 1.25)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.bodySmall
             font.bold: true
+          }
+
+          Text {
+            width: parent.width
+            text: "Choose a native XKB modifier shortcut, or record a custom shortcut containing a regular key."
+            color: Qt.darker(root.contentForeground, 1.35)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Dropdown {
+            id: nativeShortcutDropdown
+            width: parent.width
+            showLabel: false
+            options: root.nativeShortcutOptions
+            value: root.draft.shortcut ? "" : String(root.draft.nativeXkbOption || "")
+            foreground: root.contentForeground
+            accent: root.contentAccent
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.chooseNativeShortcut(value) }
           }
 
           Item {
@@ -1260,26 +1307,14 @@ Panel {
               focusable: true
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              enabled: root.draft.shortcut !== null && root.draft.shortcut !== undefined
+              enabled: (root.draft.shortcut !== null && root.draft.shortcut !== undefined)
+                || String(root.draft.nativeXkbOption || "") !== ""
               onClicked: {
                 root.capturingShortcut = false
                 root.shortcutError = ""
-                root.setDraftValue("shortcut", null)
+                root.chooseNativeShortcut("")
               }
             }
-          }
-
-          Text {
-            visible: String(root.draft.nativeXkbOption || "") !== ""
-              && root.draft.shortcut !== null && root.draft.shortcut !== undefined
-            width: parent.width
-            text: "Both shortcut sources are configured: Hyprland owns "
-              + root.nativeShortcutSummary() + "; qwitch is configured for "
-              + root.shortcutSummary(root.draft.shortcut) + "."
-            color: root.contentAccent
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
           }
 
           Text {

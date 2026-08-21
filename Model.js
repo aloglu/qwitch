@@ -704,28 +704,68 @@ function applicationLayoutIndex(value, applicationId, layouts) {
 
 function sanitizeNativeXkbOption(value) {
     var option = cleanText(value, 128);
-    return /^grp:[a-z0-9_]+_toggle$/.test(option) ? option : "";
+    return nativeXkbShortcutOptions().some(function(entry) { return entry.value === option; })
+        ? option : "";
+}
+
+function nativeXkbShortcutOptions() {
+    return [
+        { value: "grp:toggle", label: "Right Alt" },
+        { value: "grp:lalt_toggle", label: "Left Alt" },
+        { value: "grp:alt_shift_toggle", label: "Alt + Shift" },
+        { value: "grp:lalt_lshift_toggle", label: "Left Alt + Left Shift" },
+        { value: "grp:ralt_rshift_toggle", label: "Right Alt + Right Shift" },
+        { value: "grp:alt_shift_toggle_bidir", label: "Alt + Shift · directional" },
+        { value: "grp:ctrl_shift_toggle", label: "Ctrl + Shift" },
+        { value: "grp:lctrl_lshift_toggle", label: "Left Ctrl + Left Shift" },
+        { value: "grp:rctrl_rshift_toggle", label: "Right Ctrl + Right Shift" },
+        { value: "grp:ctrl_shift_toggle_bidir", label: "Ctrl + Shift · directional" },
+        { value: "grp:ctrl_alt_toggle", label: "Ctrl + Alt" },
+        { value: "grp:lctrl_lalt_toggle", label: "Left Ctrl + Left Alt" },
+        { value: "grp:rctrl_ralt_toggle", label: "Right Ctrl + Right Alt" },
+        { value: "grp:ctrl_alt_toggle_bidir", label: "Ctrl + Alt · directional" },
+        { value: "grp:win_space_toggle", label: "Super + Space" },
+        { value: "grp:alt_space_toggle", label: "Alt + Space" },
+        { value: "grp:ctrl_space_toggle", label: "Ctrl + Space" },
+        { value: "grp:caps_toggle", label: "Caps Lock" },
+        { value: "grp:shift_caps_toggle", label: "Shift + Caps Lock" },
+        { value: "grp:alt_caps_toggle", label: "Alt + Caps Lock" },
+        { value: "grp:shifts_toggle", label: "Both Shift keys" },
+        { value: "grp:alts_toggle", label: "Both Alt keys" },
+        { value: "grp:alt_altgr_toggle", label: "Both Alt keys · preserve AltGr" },
+        { value: "grp:ctrls_toggle", label: "Both Ctrl keys" },
+        { value: "grp:menu_toggle", label: "Menu" },
+        { value: "grp:lwin_toggle", label: "Left Super" },
+        { value: "grp:rwin_toggle", label: "Right Super" },
+        { value: "grp:lshift_toggle", label: "Left Shift" },
+        { value: "grp:rshift_toggle", label: "Right Shift" },
+        { value: "grp:lctrl_toggle", label: "Left Ctrl" },
+        { value: "grp:rctrl_toggle", label: "Right Ctrl" },
+        { value: "grp:sclk_toggle", label: "Scroll Lock" },
+        { value: "grp:lctrl_lwin_toggle", label: "Left Ctrl + Left Super" }
+    ];
+}
+
+function withoutGroupToggle(value) {
+    return String(value || "").split(",").map(trimmed).filter(function(option) {
+        return option && !/^grp:[a-z0-9_]+$/i.test(option);
+    }).join(",");
+}
+
+function withGroupToggle(value, option) {
+    var base = withoutGroupToggle(value);
+    var group = sanitizeNativeXkbOption(option);
+    return [base, group].filter(function(part) { return part !== ""; }).join(",");
 }
 
 function nativeXkbShortcutLabel(value) {
-    var labels = {
-        "grp:alt_shift_toggle": "Alt + Shift",
-        "grp:lalt_lshift_toggle": "Left Alt + Left Shift",
-        "grp:ralt_rshift_toggle": "Right Alt + Right Shift",
-        "grp:ctrl_shift_toggle": "Ctrl + Shift",
-        "grp:lctrl_lshift_toggle": "Left Ctrl + Left Shift",
-        "grp:rctrl_rshift_toggle": "Right Ctrl + Right Shift",
-        "grp:win_space_toggle": "Super + Space",
-        "grp:alt_space_toggle": "Alt + Space",
-        "grp:ctrl_space_toggle": "Ctrl + Space",
-        "grp:shift_caps_toggle": "Shift + Caps Lock",
-        "grp:menu_toggle": "Menu",
-        "grp:caps_toggle": "Caps Lock",
-        "grp:lwin_toggle": "Left Super",
-        "grp:rwin_toggle": "Right Super"
-    };
     var option = sanitizeNativeXkbOption(value);
-    return labels[option] || (option ? option.replace(/^grp:/, "").replace(/_toggle$/, "").replace(/_/g, " + ") : "");
+    var options = nativeXkbShortcutOptions();
+    for (var index = 0; index < options.length; index += 1) {
+        if (options[index].value === option)
+            return options[index].label;
+    }
+    return "";
 }
 
 function parseHyprOptionString(text) {
@@ -784,7 +824,7 @@ function sanitizeSettings(value) {
     result.applicationLayouts = sanitizeApplicationLayouts(source.applicationLayouts, result.layouts);
     result.deviceOverrides = sanitizeOverrides(source.deviceOverrides);
     result.adoptedExistingConfig = source.adoptedExistingConfig === true;
-    result.nativeXkbOption = sanitizeNativeXkbOption(source.nativeXkbOption);
+    result.nativeXkbOption = result.shortcut ? "" : sanitizeNativeXkbOption(source.nativeXkbOption);
     return result;
 }
 
@@ -1101,6 +1141,9 @@ var exported = {
     classifyDevice: classifyDevice,
     parseHyprOptionString: parseHyprOptionString,
     firstGroupToggle: firstGroupToggle,
+    nativeXkbShortcutOptions: nativeXkbShortcutOptions,
+    withoutGroupToggle: withoutGroupToggle,
+    withGroupToggle: withGroupToggle,
     nativeXkbShortcutLabel: nativeXkbShortcutLabel,
     normalizeApplicationId: normalizeApplicationId,
     normalizeWindowAddress: normalizeWindowAddress,

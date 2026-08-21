@@ -21,7 +21,9 @@ Item {
   property var devices: []
   readonly property var managedDevices: devices.filter(function(device) { return device.managed === true })
   readonly property var typingDevices: devices.filter(function(device) { return device.category === "keyboard" })
-  readonly property string nativeShortcutLabel: Model.nativeXkbShortcutLabel(settings.nativeXkbOption)
+  readonly property string detectedNativeXkbOption: Model.firstGroupToggle(_baselineKbOptions || _observedKbOptions)
+  readonly property string nativeShortcutLabel: Model.nativeXkbShortcutLabel(
+    settings.shortcut ? "" : (settings.nativeXkbOption || detectedNativeXkbOption))
   property int activeIndex: -1
   property bool mixedState: false
   readonly property var activeLayout: activeIndex >= 0 && activeIndex < layouts.length ? layouts[activeIndex] : null
@@ -55,6 +57,11 @@ Item {
   property string _bindsOutput: ""
   property string _nativeOptionOutput: ""
   property bool _nativeOptionReady: false
+  property bool _nativeOptionRefreshRequired: false
+  property string _observedKbOptions: ""
+  property string _baselineKbOptions: ""
+  property string _ownedKbOptions: ""
+  property bool _mayOwnKbOptions: false
   property bool _settingsReceived: false
   property bool _adoptionAttempted: false
   property var _knownBinds: []
@@ -85,6 +92,9 @@ Item {
   property int _rebaseAfterSerial: -1
   property var _activeShortcut: null
   property var _pendingShortcut: null
+  property string _pendingKbBaseline: ""
+  property string _pendingKbOwned: ""
+  property bool _pendingOwnKbOptions: false
   property var _pendingApplied: ({})
   property var _pendingRestoreMatches: ({})
   property bool _restoreAfterRefresh: false
@@ -297,7 +307,7 @@ Item {
   }
 
   function leaseState(phase, baselinesValue, appliedValue, matchesValue,
-                      extraIndexes, bindingOwned, status) {
+                      extraIndexes, bindingOwned, status, kbOptionsValue) {
     var baselineMap = baselinesValue || ({})
     var appliedMap = appliedValue || ({})
     var matchMap = matchesValue || ({})
@@ -338,13 +348,20 @@ Item {
       phase: String(phase || "active"),
       heartbeat: 0,
       bindingOwned: bindingOwned === true,
+      kbOptions: kbOptionsValue === undefined
+        ? (_mayOwnKbOptions ? {
+            baseline: _baselineKbOptions,
+            owned: [_ownedKbOptions]
+          } : null)
+        : kbOptionsValue,
       devices: records
     }
   }
 
-  function currentLeaseState(phase, bindingOwned, extraIndexes) {
+  function currentLeaseState(phase, bindingOwned, extraIndexes, kbOptionsValue) {
     return leaseState(phase, _baselines, _lastApplied, _pendingRestoreMatches,
-      extraIndexes || ({}), bindingOwned === undefined ? _mayOwnShortcut : bindingOwned)
+      extraIndexes || ({}), bindingOwned === undefined ? _mayOwnShortcut : bindingOwned,
+      "active", kbOptionsValue)
   }
 
   function leasedCommand(mode, luaCode, batch, postLuaCode, preState, postState) {
@@ -371,7 +388,7 @@ Item {
   }
 
   function updateLeasePresence() {
-    _leaseMayExist = Object.keys(_baselines).length > 0 || _mayOwnShortcut
+    _leaseMayExist = Object.keys(_baselines).length > 0 || _mayOwnShortcut || _mayOwnKbOptions
   }
 
   function markSuperseded() {
@@ -394,6 +411,10 @@ Item {
     _layoutOperation = ""
     _bindingOperation = ""
     _activeShortcut = null
+    _mayOwnKbOptions = false
+    _nativeOptionRefreshRequired = false
+    _baselineKbOptions = ""
+    _ownedKbOptions = ""
     _leaseMayExist = false
   }
 
@@ -459,17 +480,6 @@ Item {
     var detectedShortcut = Model.firstGroupToggle(Model.parseHyprOptionString(_nativeOptionOutput))
     if (settings.adoptedExistingConfig === true) {
       _adoptionAttempted = true
-      // Keep the informational native shortcut current even after the initial
-      // layout adoption. This also migrates installs whose earlier saved entry
-      // did not include the detected input:kb_options value.
-      if (String(settings.nativeXkbOption || "") !== detectedShortcut) {
-        var refreshed = clone(settings, Model.defaultSettings())
-        refreshed.nativeXkbOption = detectedShortcut
-        applySettings(Model.sanitizeSettings(refreshed), true)
-        if (shell && typeof shell.updateEntryInline === "function")
-          shell.updateEntryInline("io.github.aloglu.qwitch", refreshed)
-        Qt.callLater(root.finishMutation)
-      }
       return
     }
     var importingLayouts = configuredLayouts.length === 0
@@ -492,7 +502,10 @@ Item {
 
     var previousLayouts = JSON.stringify(configuredLayouts)
     var previousOverrides = JSON.stringify(settings && settings.deviceOverrides ? settings.deviceOverrides : {})
-    var previousShortcut = JSON.stringify(settings && settings.shortcut ? settings.shortcut : null)
+    var previousShortcut = JSON.stringify({
+      shortcut: settings && settings.shortcut ? settings.shortcut : null,
+      nativeXkbOption: String(settings && settings.nativeXkbOption || "")
+    })
     var previousLayoutScope = String(settings && settings.layoutScope || "global")
     var previousApplicationLayouts = JSON.stringify(
       settings && settings.applicationLayouts ? settings.applicationLayouts : {})
@@ -505,7 +518,10 @@ Item {
 
     var overridesChanged = JSON.stringify(next.deviceOverrides || {}) !== previousOverrides
     var layoutsChanged = JSON.stringify(configuredLayouts) !== previousLayouts
-    var shortcutChanged = JSON.stringify(next.shortcut || null) !== previousShortcut
+    var shortcutChanged = JSON.stringify({
+      shortcut: next.shortcut || null,
+      nativeXkbOption: String(next.nativeXkbOption || "")
+    }) !== previousShortcut
     var scopeBehaviorChanged = String(next.layoutScope || "global") !== previousLayoutScope
       || JSON.stringify(next.applicationLayouts || {}) !== previousApplicationLayouts
     if (layoutsChanged)
@@ -743,6 +759,12 @@ Item {
       _runtimeReady = true
       _reconcilePending = true
       _bindRefreshPending = true
+      if (nativeOptionProcess.running) {
+        _nativeOptionRefreshRequired = true
+      } else {
+        _nativeOptionRefreshRequired = false
+        nativeOptionProcess.running = true
+      }
     }
     finishDeviceRefresh()
 
@@ -1288,6 +1310,11 @@ Item {
       _bindRefreshPending = true
       return
     }
+    if (!_nativeOptionReady) {
+      _bindRefreshPending = true
+      if (!nativeOptionProcess.running) nativeOptionProcess.running = true
+      return
+    }
     if (bindsProcess.running || bindingProcess.running) {
       _bindRefreshPending = true
       return
@@ -1326,24 +1353,36 @@ Item {
     }
     _knownBinds = binds
     _bindSnapshotReady = true
+    if (!_mayOwnKbOptions) _baselineKbOptions = _observedKbOptions
     var hasOwnedBinding = binds.some(function(bind) { return root.ownBinding(bind) })
     var desired = Model.normalizeShortcut(settings.shortcut)
+    var desiredOptions = desired
+      ? Model.withoutGroupToggle(_baselineKbOptions)
+      : settings.nativeXkbOption
+        ? Model.withGroupToggle(_baselineKbOptions, settings.nativeXkbOption)
+        : _baselineKbOptions
+    var shouldOwnOptions = desiredOptions !== _baselineKbOptions
+    var optionsConverged = _mayOwnKbOptions === shouldOwnOptions
+      && (!shouldOwnOptions || _ownedKbOptions === desiredOptions)
     if (!desired) {
       shortcutConflict = ""
-      if (_mayOwnShortcut) runBindingCleanup("")
+      if (_mayOwnShortcut || !optionsConverged)
+        runBindingCleanup("", _baselineKbOptions, desiredOptions, shouldOwnOptions)
       return
     }
 
     var validation = validateShortcut(desired)
     if (validation) {
       shortcutConflict = validation
-      if (_mayOwnShortcut) runBindingCleanup(validation)
+      if (_mayOwnShortcut || _mayOwnKbOptions)
+        runBindingCleanup(validation, _baselineKbOptions, _baselineKbOptions, false)
       return
     }
 
     shortcutConflict = ""
-    if (hasOwnedBinding && JSON.stringify(desired) === JSON.stringify(_activeShortcut)) return
-    runBindingReplace(desired)
+    if (hasOwnedBinding && JSON.stringify(desired) === JSON.stringify(_activeShortcut)
+        && optionsConverged) return
+    runBindingReplace(desired, _baselineKbOptions, desiredOptions, shouldOwnOptions)
   }
 
   function shortcutChord(shortcut) {
@@ -1352,7 +1391,35 @@ Item {
     return parts.join(" + ")
   }
 
-  function runBindingReplace(shortcut) {
+  function kbOptionsConfigCode(value) {
+    return "hl.config({ input = { kb_options = " + Model.luaQuote(value) + " } })"
+  }
+
+  function kbOptionsLease(baseline, ownedValues) {
+    var source = Array.isArray(ownedValues) ? ownedValues : []
+    var seen = ({})
+    var owned = []
+    for (var i = 0; i < source.length; i++) {
+      var value = String(source[i] || "")
+      if (seen[value]) continue
+      seen[value] = true
+      owned.push(value)
+    }
+    return owned.length > 0 ? { baseline: String(baseline || ""), owned: owned } : null
+  }
+
+  function pendingKbOptionsLease(baseline, owned, shouldOwn) {
+    return shouldOwn ? kbOptionsLease(baseline, [owned]) : null
+  }
+
+  function transitionKbOptionsLease(baseline, desired, shouldOwn) {
+    var values = []
+    if (_mayOwnKbOptions) values.push(_ownedKbOptions)
+    if (shouldOwn) values.push(desired)
+    return kbOptionsLease(baseline, values)
+  }
+
+  function runBindingReplace(shortcut, baselineOptions, desiredOptions, shouldOwnOptions) {
     var chord = shortcutChord(shortcut)
     var command = "omarchy-shell -q qwitch nextLayout"
     var token = Model.luaQuote(_ownerToken)
@@ -1366,22 +1433,31 @@ Item {
       + "if old_handle then local ok, result = pcall(function() return old_handle:unbind() end); "
       + "if not ok or result == false then error('qwitch_unbind_failed') end end; "
       + "if rawget(_G, '__qwitch_owned_binding') == old then _G.__qwitch_owned_binding = nil end; "
+      + kbOptionsConfigCode(desiredOptions) + "; "
       + "local candidate = hl.bind(" + Model.luaQuote(chord) + ", hl.dsp.exec_cmd(" + Model.luaQuote(command) + "), { description = 'qwitch: Next layout' }); "
       + "_G.__qwitch_owned_binding = { token = " + token + ", handle = candidate }; "
       + "end"
     _pendingShortcut = shortcut
+    _pendingKbBaseline = baselineOptions
+    _pendingKbOwned = desiredOptions
+    _pendingOwnKbOptions = shouldOwnOptions
     _bindingOperation = "replace"
     _bindingEpoch = _runtimeEpoch
+    var preOptionsLease = transitionKbOptionsLease(baselineOptions, desiredOptions, shouldOwnOptions)
+    var postOptionsLease = pendingKbOptionsLease(baselineOptions, desiredOptions, shouldOwnOptions)
     _mayOwnShortcut = true
+    _baselineKbOptions = baselineOptions
+    _ownedKbOptions = desiredOptions
+    _mayOwnKbOptions = shouldOwnOptions
     _pendingBindingError = ""
     _actionError = ""
-    var preLease = currentLeaseState("binding-replacing", true)
-    var postLease = currentLeaseState("binding-active", true)
+    var preLease = currentLeaseState("binding-replacing", true, ({}), preOptionsLease)
+    var postLease = currentLeaseState("binding-active", true, ({}), postOptionsLease)
     bindingProcess.command = leasedCommand("eval", code, "", "", preLease, postLease)
     bindingProcess.running = true
   }
 
-  function runBindingCleanup(preserveError) {
+  function runBindingCleanup(preserveError, baselineOptions, desiredOptions, shouldOwnOptions) {
     _bindingOperation = "cleanup"
     _bindingEpoch = _runtimeEpoch
     _pendingBindingError = String(preserveError || "")
@@ -1393,9 +1469,15 @@ Item {
       + "if type(owned) == 'table' and owned.token == " + token + " then local handle = owned.handle; "
       + "if handle then local ok, result = pcall(function() return handle:unbind() end); "
       + "if not ok or result == false then error('qwitch_unbind_failed') end end; "
-      + "if rawget(_G, '__qwitch_owned_binding') == owned then _G.__qwitch_owned_binding = nil end end end end"
-    var preLease = currentLeaseState("binding-removing", true)
-    var postLease = currentLeaseState("binding-removed", false)
+      + "if rawget(_G, '__qwitch_owned_binding') == owned then _G.__qwitch_owned_binding = nil end end; "
+      + kbOptionsConfigCode(desiredOptions) + "; end end"
+    _pendingKbBaseline = baselineOptions
+    _pendingKbOwned = desiredOptions
+    _pendingOwnKbOptions = shouldOwnOptions
+    var preOptionsLease = transitionKbOptionsLease(baselineOptions, desiredOptions, shouldOwnOptions)
+    var postOptionsLease = pendingKbOptionsLease(baselineOptions, desiredOptions, shouldOwnOptions)
+    var preLease = currentLeaseState("binding-removing", _mayOwnShortcut, ({}), preOptionsLease)
+    var postLease = currentLeaseState("binding-removed", false, ({}), postOptionsLease)
     bindingProcess.command = leasedCommand("eval", code, "", "", preLease, postLease)
     bindingProcess.running = true
   }
@@ -1439,6 +1521,8 @@ Item {
     onExited: function(exitCode) {
       if (exitCode === 0) {
         root._runtimeReady = false
+        root._nativeOptionReady = false
+        root._nativeOptionRefreshRequired = true
         root._runtimeAwaitingFreshDevices = true
         root._runtimeReadyAfterSerial = root._deviceRefreshSerial
         root.lastError = ""
@@ -1496,6 +1580,11 @@ Item {
       root._layoutPipeline = false
       root._activeShortcut = null
       root._mayOwnShortcut = false
+      root._mayOwnKbOptions = false
+      root._baselineKbOptions = ""
+      root._ownedKbOptions = ""
+      root._nativeOptionReady = false
+      root._nativeOptionRefreshRequired = true
       root._postReloadBindSerial = root._bindRefreshSerial
       root._runtimeReady = false
       root._runtimeAwaitingFreshDevices = true
@@ -1537,9 +1626,23 @@ Item {
     id: nativeOptionProcess
     command: ["hyprctl", "-j", "getoption", "input:kb_options"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root._nativeOptionOutput = text }
-    onExited: function() {
+    onExited: function(exitCode) {
+      if (root._nativeOptionRefreshRequired && root._runtimeReady) {
+        root._nativeOptionRefreshRequired = false
+        root._nativeOptionReady = false
+        Qt.callLater(function() { nativeOptionProcess.running = true })
+        return
+      }
+      if (exitCode !== 0) {
+        root._nativeOptionReady = false
+        return
+      }
+      root._observedKbOptions = Model.parseHyprOptionString(root._nativeOptionOutput)
+      if (root._runtimeReady && !root._mayOwnKbOptions)
+        root._baselineKbOptions = root._observedKbOptions
       root._nativeOptionReady = true
       root.maybeAdoptExistingConfig()
+      if (root._runtimeReady) root.refreshBinds()
     }
   }
 
@@ -1708,6 +1811,10 @@ Item {
       }
       var currentEpoch = root._bindingEpoch === root._runtimeEpoch
       if (exitCode === 0) {
+        root._baselineKbOptions = root._pendingKbBaseline
+        root._ownedKbOptions = root._pendingKbOwned
+        root._mayOwnKbOptions = root._pendingOwnKbOptions
+        root._observedKbOptions = root._pendingKbOwned
         if (!currentEpoch) {
           root._activeShortcut = null
         } else if (root._bindingOperation === "replace") {
@@ -1723,6 +1830,9 @@ Item {
       } else root.shortcutConflict = root._actionError || "Could not register the qwitch shortcut"
       root._bindingOperation = ""
       root._pendingBindingError = ""
+      root._pendingKbBaseline = ""
+      root._pendingKbOwned = ""
+      root._pendingOwnKbOptions = false
       if (exitCode === 0) root.updateLeasePresence()
       if (!currentEpoch) {
         root._bindRefreshPending = true
@@ -1751,6 +1861,7 @@ Item {
         root._layoutEventWindowId = ""
         root._adoptionAttempted = false
         root._nativeOptionReady = false
+        root._nativeOptionRefreshRequired = true
         if (!nativeOptionProcess.running) nativeOptionProcess.running = true
         reloadTimer.restart()
       } else if (name.indexOf("activelayout") !== -1 || name.indexOf("device") !== -1) {

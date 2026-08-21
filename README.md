@@ -46,6 +46,12 @@ window regardless of which monitor contains it. Moving focus to a remembered
 window on another monitor restores that window's app or window layout, and all
 qwitch bar instances display the resulting active keyboard layout.
 
+Automatic app- and window-scope restores are silent. The OSD preference applies
+only to layout changes initiated by the user, including qwitch controls and a
+native XKB group-toggle shortcut. qwitch correlates compositor layout events
+with its own switch operations so a delayed self-generated event cannot produce
+a second OSD notification.
+
 ## Install
 
 After the repository is published, add it disabled, review the checkout, then

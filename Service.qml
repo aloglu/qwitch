@@ -102,6 +102,7 @@ Item {
   property bool _externalRefreshPreviousMixed: false
   property string _externalRefreshApplicationId: ""
   property string _externalRefreshWindowId: ""
+  property var _internalLayoutEvents: ({})
   property int _switchTarget: -1
   property var _switchPrevious: ({})
   property string _bindingOperation: ""
@@ -124,6 +125,57 @@ Item {
 
   function clone(value, fallback) {
     try { return JSON.parse(JSON.stringify(value)) } catch (error) { return fallback }
+  }
+
+  // qwitch renders its own OSD for manual switches and no OSD for automatic
+  // restores. Correlate the compositor events produced by those operations so
+  // a delayed activelayout notification is never mistaken for an external one.
+  function armInternalLayoutEvents(indexByName) {
+    var pending = clone(_internalLayoutEvents, {})
+    var deadline = Date.now() + 2000
+    for (var name in indexByName) {
+      if (!safeDeviceName(name)) continue
+      var existing = pending[name] || ({})
+      pending[name] = {
+        count: Math.max(0, Number(existing.count || 0)) + 1,
+        deadline: deadline
+      }
+    }
+    _internalLayoutEvents = pending
+    if (Object.keys(pending).length > 0) internalLayoutEventTimer.restart()
+  }
+
+  function clearExpiredInternalLayoutEvents() {
+    var current = _internalLayoutEvents || ({})
+    var next = ({})
+    var now = Date.now()
+    for (var name in current) {
+      var entry = current[name] || ({})
+      if (Number(entry.count || 0) > 0 && Number(entry.deadline || 0) > now)
+        next[name] = entry
+    }
+    _internalLayoutEvents = next
+    if (Object.keys(next).length > 0) internalLayoutEventTimer.restart()
+  }
+
+  function consumeInternalLayoutEvent(event) {
+    if (!event || typeof event.parse !== "function") return false
+    var argumentsList = event.parse(2)
+    var name = argumentsList && argumentsList.length > 0
+      ? String(argumentsList[0] || "") : ""
+    var pending = clone(_internalLayoutEvents, {})
+    var entry = pending[name]
+    if (!entry || Number(entry.count || 0) <= 0
+        || Number(entry.deadline || 0) <= Date.now()) {
+      clearExpiredInternalLayoutEvents()
+      return false
+    }
+    entry.count = Number(entry.count) - 1
+    if (entry.count > 0) pending[name] = entry
+    else delete pending[name]
+    _internalLayoutEvents = pending
+    if (Object.keys(pending).length === 0) internalLayoutEventTimer.stop()
+    return true
   }
 
   function applicationIdFor(toplevel) {
@@ -383,6 +435,8 @@ Item {
     _switchApplicationId = ""
     _switchWindowId = ""
     rememberedLayoutTimer.stop()
+    _internalLayoutEvents = ({})
+    internalLayoutEventTimer.stop()
     _queuedSettings = null
     _layoutOperation = ""
     _bindingOperation = ""
@@ -1216,6 +1270,7 @@ Item {
       ({}), ({}), _mayOwnShortcut)
     switchProcess.command = leasedCommand("eval-then-batch", ownershipGuardCode(),
       batch, "", _switchLeasePre, _switchLeasePost)
+    armInternalLayoutEvents(targets)
     switchProcess.running = true
     return true
   }
@@ -1409,7 +1464,8 @@ Item {
       activeApplicationId: activeApplicationId,
       activeWindowId: activeWindowId,
       rememberedApplications: Object.keys(settings.applicationLayouts || {}).length,
-      rememberedWindows: Object.keys(windowLayouts || {}).length
+      rememberedWindows: Object.keys(windowLayouts || {}).length,
+      pendingInternalLayoutEvents: Object.keys(_internalLayoutEvents || {}).length
     })
   }
 
@@ -1648,6 +1704,7 @@ Item {
       root._switchWindowId = ""
       var rollback = root.switchBatch(root._switchPrevious)
       if (rollback) {
+        root.armInternalLayoutEvents(root._switchPrevious)
         var rollbackApplied = root.appliedAtIndexes(root._switchPrevious)
         var rollbackPost = root.leaseState("layout-active", root._baselines,
           rollbackApplied, ({}), ({}), root._mayOwnShortcut)
@@ -1744,12 +1801,16 @@ Item {
         root._showOsdAfterExternalRefresh = false
         root._externalRefreshApplicationId = ""
         root._externalRefreshWindowId = ""
+        root._internalLayoutEvents = ({})
+        internalLayoutEventTimer.stop()
         root._adoptionAttempted = false
         root._nativeOptionReady = false
         if (!nativeOptionProcess.running) nativeOptionProcess.running = true
         reloadTimer.restart()
       } else if (name.indexOf("activelayout") !== -1 || name.indexOf("device") !== -1) {
-        if (name.indexOf("activelayout") !== -1 && root._runtimeReady
+        var internalLayoutEvent = name.indexOf("activelayout") !== -1
+          && root.consumeInternalLayoutEvent(event)
+        if (name.indexOf("activelayout") !== -1 && !internalLayoutEvent && root._runtimeReady
             && !root._layoutPipeline && !root._showOsdAfterExternalRefresh) {
           root._externalRefreshPreviousIndex = root.activeIndex
           root._externalRefreshPreviousMixed = root.mixedState
@@ -1791,6 +1852,12 @@ Item {
     id: rememberedLayoutTimer
     interval: 120
     onTriggered: root.applyRememberedLayout()
+  }
+
+  Timer {
+    id: internalLayoutEventTimer
+    interval: 2000
+    onTriggered: root.clearExpiredInternalLayoutEvents()
   }
 
   Timer {

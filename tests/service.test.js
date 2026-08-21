@@ -208,6 +208,16 @@ test("OSD preferences bypass runtime startup queuing and use Omarchy OSD", () =>
   assert.match(service, /if \(showExternalOsd\) Qt\.callLater\(root\.showLayoutOsd\)/)
 })
 
+test("automatic scope restores cannot return through the external OSD path", () => {
+  assert.match(service, /function armInternalLayoutEvents\(indexByName\)/)
+  assert.match(service, /armInternalLayoutEvents\(targets\)[\s\S]*switchProcess\.running = true/)
+  assert.match(service, /var argumentsList = event\.parse\(2\)/)
+  assert.match(service, /var internalLayoutEvent = name\.indexOf\("activelayout"\) !== -1/)
+  assert.match(service, /!internalLayoutEvent && root\._runtimeReady/)
+  assert.match(service, /id: internalLayoutEventTimer[\s\S]*root\.clearExpiredInternalLayoutEvents\(\)/)
+  assert.match(readme, /Automatic app- and window-scope restores are silent/)
+})
+
 test("per-application memory remains available through the native app identity", () => {
   assert.match(service, /target: ToplevelManager/)
   assert.match(service, /function onActiveToplevelChanged\(\) \{ root\.refreshActiveApplication\(\) \}/)

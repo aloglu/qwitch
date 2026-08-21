@@ -200,26 +200,15 @@ test("settings reopen at the top and distinguish shortcut ownership", () => {
   assert.doesNotMatch(panel, /Changes save automatically/i)
 })
 
-test("OSD preferences bypass runtime startup queuing and use Omarchy OSD", () => {
+test("OSD is an all-or-nothing view of authoritative layout changes", () => {
   assert.match(service, /osdEnabled = next\.osdEnabled === true[\s\S]*if \(busy\)/)
   assert.match(service, /shell\.summon\("omarchy\.osd", JSON\.stringify\(payload\)\)/)
-  assert.match(service, /if \(!osdEnabled \|\| !shell \|\| !activeLayout\) return/)
-  assert.match(service, /name\.indexOf\("activelayout"\)[\s\S]*_showOsdAfterExternalRefresh = true/)
-  assert.match(service, /if \(showExternalOsd\) Qt\.callLater\(root\.showLayoutOsd\)/)
-})
-
-test("automatic scope restores cannot return through the external OSD path", () => {
-  assert.match(service, /function armInternalLayoutEvents\(indexByName\)/)
-  assert.match(service, /armInternalLayoutEvents\(targets\)[\s\S]*switchProcess\.running = true/)
-  assert.match(service, /var argumentsList = event\.parse\(2\)/)
-  assert.match(service, /keymapNameForLayout\(indexByName\[name\]\)/)
-  assert.match(service, /if \(keymap\) \{[\s\S]*pending\.keymaps && pending\.keymaps\[keymap\]/)
-  assert.match(service, /else if \(pending\.names && pending\.names\[name\]\)/)
-  assert.match(service, /A different keymap within the correlation window is a genuine external/)
-  assert.match(service, /var internalLayoutEvent = name\.indexOf\("activelayout"\) !== -1/)
-  assert.match(service, /!internalLayoutEvent && root\._runtimeReady/)
-  assert.match(service, /id: internalLayoutEventTimer[\s\S]*root\.clearExpiredInternalLayoutEvents\(\)/)
-  assert.match(readme, /Automatic app- and window-scope restores are silent/)
+  assert.match(service, /onActiveIndexChanged:[\s\S]*root\.showLayoutOsd\(index\)/)
+  assert.match(service, /function showLayoutOsd\(index\)/)
+  assert.match(service, /if \(!osdEnabled \|\| !shell \|\| !Number\.isInteger\(target\)/)
+  assert.doesNotMatch(service, /_showOsdAfterSwitch|_showOsdAfterExternalRefresh|internalLayoutEvent/)
+  assert.match(panel, /Show all layout changes on OSD/)
+  assert.match(readme, /OSD preference is all-or-nothing/)
 })
 
 test("per-application memory remains available through the native app identity", () => {
@@ -229,7 +218,7 @@ test("per-application memory remains available through the native app identity",
   assert.match(service, /Model\.normalizeApplicationId\(toplevel\.appId \|\| ""\)/)
   assert.match(service, /scope === "application" \? settings\.applicationLayouts : windowLayouts/)
   assert.match(service, /Model\.rememberedLayoutIndex\(memories, identity, layouts\)/)
-  assert.match(service, /switchTo\(target, false, false\)/)
+  assert.match(service, /switchTo\(target, false\)/)
   assert.match(service, /root\.rememberFocusedLayout\(root\._switchTarget,/)
   assert.match(service, /var learnedExternalLayout = mayLearnExternalLayout/)
   assert.match(service, /root\.rememberFocusedLayout\(root\.activeIndex,/)
@@ -246,7 +235,7 @@ test("per-window memory uses live Hyprland identities and remains session-only",
   assert.match(service, /function onValuesChanged\(\) \{[\s\S]*root\.pruneWindowLayouts\(\)/)
   assert.match(service, /property var windowLayouts: \(\{\}\)/)
   assert.match(service, /if \(target < 0\) \{[\s\S]*rememberFocusedLayout\(activeIndex/)
-  assert.match(service, /_externalRefreshWindowId = root\.activeWindowId/)
+  assert.match(service, /_layoutEventWindowId = root\.activeWindowId/)
   assert.match(service, /rememberFocusedLayout\(root\.activeIndex, learnedApplicationId, learnedWindowId\)/)
   assert.match(panel, /value: "window", label: "Per window"/)
   assert.doesNotMatch(manifest, /"windowLayouts"/)

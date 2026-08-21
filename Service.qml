@@ -93,16 +93,12 @@ Item {
   property int _switchAfterRefresh: -1
   property string _layoutOperation: ""
   property int _targetAfterApply: 0
-  property bool _showOsdAfterSwitch: false
   property bool _rememberScopeAfterSwitch: false
   property string _switchApplicationId: ""
   property string _switchWindowId: ""
-  property bool _showOsdAfterExternalRefresh: false
-  property int _externalRefreshPreviousIndex: -1
-  property bool _externalRefreshPreviousMixed: false
-  property string _externalRefreshApplicationId: ""
-  property string _externalRefreshWindowId: ""
-  property var _internalLayoutEvents: ({})
+  property bool _layoutEventPending: false
+  property string _layoutEventApplicationId: ""
+  property string _layoutEventWindowId: ""
   property int _switchTarget: -1
   property var _switchPrevious: ({})
   property string _bindingOperation: ""
@@ -127,75 +123,11 @@ Item {
     try { return JSON.parse(JSON.stringify(value)) } catch (error) { return fallback }
   }
 
-  // qwitch renders its own OSD for manual switches and no OSD for automatic
-  // restores. Correlate the compositor events produced by those operations so
-  // a delayed activelayout notification is never mistaken for an external one.
-  function normalizeKeymapName(value) {
-    return String(value || "").trim().replace(/\s+/g, " ").toLowerCase()
-  }
-
-  function keymapNameForLayout(index) {
-    var target = Number(index)
-    if (!Number.isInteger(target) || target < 0 || target >= layouts.length) return ""
-    var layout = layouts[target]
-    for (var i = 0; i < catalog.length; i++) {
-      var candidate = catalog[i]
-      if (candidate && candidate.layout === layout.layout
-          && String(candidate.variant || "") === String(layout.variant || ""))
-        return normalizeKeymapName(candidate.description || "")
-    }
-    return ""
-  }
-
-  function armInternalLayoutEvents(indexByName) {
-    var names = ({})
-    var keymaps = ({})
-    for (var name in indexByName) {
-      if (!safeDeviceName(name)) continue
-      names[name] = true
-      var keymap = keymapNameForLayout(indexByName[name])
-      if (keymap) keymaps[keymap] = true
-    }
-    _internalLayoutEvents = {
-      names: names,
-      keymaps: keymaps,
-      deadline: Date.now() + 2000
-    }
-    internalLayoutEventTimer.restart()
-  }
-
-  function clearExpiredInternalLayoutEvents() {
-    var current = _internalLayoutEvents || ({})
-    if (Number(current.deadline || 0) > Date.now()) {
-      internalLayoutEventTimer.restart()
-      return
-    }
-    _internalLayoutEvents = ({})
-  }
-
-  function consumeInternalLayoutEvent(event) {
-    if (!event || typeof event.parse !== "function") return false
-    var argumentsList = event.parse(2)
-    var name = argumentsList && argumentsList.length > 0
-      ? String(argumentsList[0] || "") : ""
-    var keymap = argumentsList && argumentsList.length > 1
-      ? normalizeKeymapName(argumentsList[1]) : ""
-    var pending = _internalLayoutEvents || ({})
-    if (Number(pending.deadline || 0) <= Date.now()) {
-      clearExpiredInternalLayoutEvents()
-      return false
-    }
-    if (keymap) {
-      if (pending.keymaps && pending.keymaps[keymap]) return true
-    } else if (pending.names && pending.names[name]) {
-      return true
-    }
-
-    // A different keymap within the correlation window is a genuine external
-    // switch. End correlation immediately so later events remain observable.
-    _internalLayoutEvents = ({})
-    internalLayoutEventTimer.stop()
-    return false
+  onActiveIndexChanged: {
+    var index = activeIndex
+    if (!osdEnabled || !_runtimeReady || !_settingsReceived
+        || _rebaseAfterReload || _superseded || index < 0) return
+    Qt.callLater(function() { root.showLayoutOsd(index) })
   }
 
   function applicationIdFor(toplevel) {
@@ -293,7 +225,7 @@ Item {
       return
     }
     if (target === activeIndex) return
-    switchTo(target, false, false)
+    switchTo(target, false)
   }
 
   function resetOwnerIdentity(minimumGeneration) {
@@ -455,8 +387,9 @@ Item {
     _switchApplicationId = ""
     _switchWindowId = ""
     rememberedLayoutTimer.stop()
-    _internalLayoutEvents = ({})
-    internalLayoutEventTimer.stop()
+    _layoutEventPending = false
+    _layoutEventApplicationId = ""
+    _layoutEventWindowId = ""
     _queuedSettings = null
     _layoutOperation = ""
     _bindingOperation = ""
@@ -730,9 +663,9 @@ Item {
     try {
       payload = JSON.parse(_devicesOutput || "{}")
     } catch (error) {
-      _showOsdAfterExternalRefresh = false
-      _externalRefreshApplicationId = ""
-      _externalRefreshWindowId = ""
+      _layoutEventPending = false
+      _layoutEventApplicationId = ""
+      _layoutEventWindowId = ""
       lastError = "Could not read Hyprland keyboards"
       finishDeviceRefresh()
       return
@@ -796,16 +729,13 @@ Item {
     var learnedExternalLayout = mayLearnExternalLayout
       && !mixedState && activeIndex >= 0
       && (previouslyObservedMixed || activeIndex !== previouslyObservedIndex)
-    var showExternalOsd = _showOsdAfterExternalRefresh
-      && !mixedState && activeIndex >= 0
-      && (_externalRefreshPreviousMixed || activeIndex !== _externalRefreshPreviousIndex)
-    var learnedApplicationId = _showOsdAfterExternalRefresh
-      ? _externalRefreshApplicationId : activeApplicationId
-    var learnedWindowId = _showOsdAfterExternalRefresh
-      ? _externalRefreshWindowId : activeWindowId
-    _showOsdAfterExternalRefresh = false
-    _externalRefreshApplicationId = ""
-    _externalRefreshWindowId = ""
+    var learnedApplicationId = _layoutEventPending
+      ? _layoutEventApplicationId : activeApplicationId
+    var learnedWindowId = _layoutEventPending
+      ? _layoutEventWindowId : activeWindowId
+    _layoutEventPending = false
+    _layoutEventApplicationId = ""
+    _layoutEventWindowId = ""
     maybeAdoptExistingConfig()
     if (_runtimeAwaitingFreshDevices && _activeDeviceRefreshSerial > _runtimeReadyAfterSerial) {
       _runtimeAwaitingFreshDevices = false
@@ -817,11 +747,10 @@ Item {
     finishDeviceRefresh()
 
     // Native XKB group toggles and other compositor-side changes do not enter
-    // switchTo(). Learn any coherent externally observed change independently
-    // of whether its Hyprland event also requested an OSD notification.
+    // switchTo(). Learn any coherent externally observed change for the window
+    // that was focused when Hyprland emitted the layout event.
     if (learnedExternalLayout)
       root.rememberFocusedLayout(root.activeIndex, learnedApplicationId, learnedWindowId)
-    if (showExternalOsd) Qt.callLater(root.showLayoutOsd)
 
     if (_superseded) return
 
@@ -851,7 +780,7 @@ Item {
       var switchTarget = _switchAfterRefresh
       _switchAfterRefresh = -1
       Qt.callLater(function() {
-        if (!root.switchTo(switchTarget, false, false)) {
+        if (!root.switchTo(switchTarget, false)) {
           root._layoutPipeline = false
           root._reconcilePending = true
           root.finishMutation()
@@ -1215,7 +1144,7 @@ Item {
       + " or not owner or owner.token ~= " + token + " then error('qwitch_stale') end end"
   }
 
-  function switchTo(index, showOsd, rememberScope) {
+  function switchTo(index, rememberScope) {
     if (_superseded) {
       lastError = "A newer qwitch service owns the runtime state"
       return false
@@ -1272,7 +1201,6 @@ Item {
 
     _switchTarget = target
     _switchPrevious = previous
-    _showOsdAfterSwitch = showOsd !== false
     _rememberScopeAfterSwitch = rememberScope !== false
     _switchApplicationId = _rememberScopeAfterSwitch ? activeApplicationId : ""
     _switchWindowId = _rememberScopeAfterSwitch ? activeWindowId : ""
@@ -1290,7 +1218,6 @@ Item {
       ({}), ({}), _mayOwnShortcut)
     switchProcess.command = leasedCommand("eval-then-batch", ownershipGuardCode(),
       batch, "", _switchLeasePre, _switchLeasePost)
-    armInternalLayoutEvents(targets)
     switchProcess.running = true
     return true
   }
@@ -1301,7 +1228,7 @@ Item {
       return false
     }
     var next = mixedState || activeIndex < 0 ? 0 : (activeIndex + 1) % layouts.length
-    return switchTo(next, true)
+    return switchTo(next)
   }
 
   function updateDevicesAfterSwitch(index) {
@@ -1335,11 +1262,14 @@ Item {
     _lastApplied = applied
   }
 
-  function showLayoutOsd() {
-    if (!osdEnabled || !shell || !activeLayout) return
+  function showLayoutOsd(index) {
+    var target = Number(index)
+    if (!osdEnabled || !shell || !Number.isInteger(target)
+        || target < 0 || target >= layouts.length) return
+    var layout = layouts[target]
     var mode = osdDisplayMode || "both"
-    var label = activeLayout.label || String(activeLayout.layout || "").toUpperCase()
-    var flag = activeLayout.flag || ""
+    var label = layout.label || String(layout.layout || "").toUpperCase()
+    var flag = layout.flag || ""
     var payload
     if (mode === "flag" && flag) payload = { icon: flag, message: "" }
     else if (mode === "text") payload = { icon: "keyboard", message: label }
@@ -1485,7 +1415,7 @@ Item {
       activeWindowId: activeWindowId,
       rememberedApplications: Object.keys(settings.applicationLayouts || {}).length,
       rememberedWindows: Object.keys(windowLayouts || {}).length,
-      pendingInternalLayoutEvents: Number((_internalLayoutEvents || {}).deadline || 0) > Date.now()
+      layoutEventPending: _layoutEventPending
     })
   }
 
@@ -1633,9 +1563,9 @@ Item {
       if (exitCode === 0) root.consumeDeviceOutput()
       else {
         root.lastError = root.lastError || "hyprctl could not read input devices"
-        root._showOsdAfterExternalRefresh = false
-        root._externalRefreshApplicationId = ""
-        root._externalRefreshWindowId = ""
+        root._layoutEventPending = false
+        root._layoutEventApplicationId = ""
+        root._layoutEventWindowId = ""
         root._restoreAfterRefresh = false
         root._switchAfterRefresh = -1
         root._layoutPipeline = false
@@ -1711,7 +1641,6 @@ Item {
         root._rememberScopeAfterSwitch = false
         root._switchApplicationId = ""
         root._switchWindowId = ""
-        if (root._showOsdAfterSwitch) root.showLayoutOsd()
         root._layoutPipeline = false
         root.refreshDevices()
         root.finishMutation()
@@ -1724,7 +1653,6 @@ Item {
       root._switchWindowId = ""
       var rollback = root.switchBatch(root._switchPrevious)
       if (rollback) {
-        root.armInternalLayoutEvents(root._switchPrevious)
         var rollbackApplied = root.appliedAtIndexes(root._switchPrevious)
         var rollbackPost = root.leaseState("layout-active", root._baselines,
           rollbackApplied, ({}), ({}), root._mayOwnShortcut)
@@ -1818,25 +1746,19 @@ Item {
         root._rebaseAfterSerial = root._deviceRefreshSerial
         root._postReloadBindSerial = root._bindRefreshSerial
         root._activeShortcut = null
-        root._showOsdAfterExternalRefresh = false
-        root._externalRefreshApplicationId = ""
-        root._externalRefreshWindowId = ""
-        root._internalLayoutEvents = ({})
-        internalLayoutEventTimer.stop()
+        root._layoutEventPending = false
+        root._layoutEventApplicationId = ""
+        root._layoutEventWindowId = ""
         root._adoptionAttempted = false
         root._nativeOptionReady = false
         if (!nativeOptionProcess.running) nativeOptionProcess.running = true
         reloadTimer.restart()
       } else if (name.indexOf("activelayout") !== -1 || name.indexOf("device") !== -1) {
-        var internalLayoutEvent = name.indexOf("activelayout") !== -1
-          && root.consumeInternalLayoutEvent(event)
-        if (name.indexOf("activelayout") !== -1 && !internalLayoutEvent && root._runtimeReady
-            && !root._layoutPipeline && !root._showOsdAfterExternalRefresh) {
-          root._externalRefreshPreviousIndex = root.activeIndex
-          root._externalRefreshPreviousMixed = root.mixedState
-          root._externalRefreshApplicationId = root.activeApplicationId
-          root._externalRefreshWindowId = root.activeWindowId
-          root._showOsdAfterExternalRefresh = true
+        if (name.indexOf("activelayout") !== -1 && root._runtimeReady
+            && !root._layoutPipeline && !root._layoutEventPending) {
+          root._layoutEventApplicationId = root.activeApplicationId
+          root._layoutEventWindowId = root.activeWindowId
+          root._layoutEventPending = true
         }
         refreshTimer.restart()
       }
@@ -1872,12 +1794,6 @@ Item {
     id: rememberedLayoutTimer
     interval: 120
     onTriggered: root.applyRememberedLayout()
-  }
-
-  Timer {
-    id: internalLayoutEventTimer
-    interval: 2000
-    onTriggered: root.clearExpiredInternalLayoutEvents()
   }
 
   Timer {

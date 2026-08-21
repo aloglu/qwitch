@@ -1120,14 +1120,14 @@ Panel {
               id: osdLabel
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
-              text: "Show layout changes on OSD  󰋼"
+              text: "Show all layout changes on OSD  󰋼"
               color: root.contentForeground
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.body
               HoverHandler { id: osdHelp }
               PanelToolTip {
                 visible: osdHelp.hovered
-                text: "Show the selected layout through Omarchy’s on-screen display."
+                text: "Show every layout change, including automatic app and window restores, through Omarchy’s on-screen display."
                 fontFamily: root.contentFontFamily
               }
             }

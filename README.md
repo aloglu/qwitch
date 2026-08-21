@@ -13,7 +13,7 @@ layout and shortcut changes in the running Hyprland session.
 - Optionally remember layouts per application or per live window, while
   keeping one global layout as the default behavior.
 - Show a label, Unicode flag, or both in the bar.
-- Optionally show the same representation through Omarchy's OSD.
+- Optionally show every layout change through Omarchy's OSD.
 - See actual typing keyboards by default, with rejected keyboard-like devices
   available in a compact advanced section for diagnosis and overrides.
 - Keep security tokens, OTP/FIDO devices, virtual keyboards, consumer-control
@@ -46,12 +46,11 @@ window regardless of which monitor contains it. Moving focus to a remembered
 window on another monitor restores that window's app or window layout, and all
 qwitch bar instances display the resulting active keyboard layout.
 
-Automatic app- and window-scope restores are silent. The OSD preference applies
-only to layout changes initiated by the user, including qwitch controls and a
-native XKB group-toggle shortcut. qwitch correlates compositor layout events
-with the XKB keymap targeted by its own switch operations. This also covers
-duplicate events mirrored through an input-method virtual keyboard, so a
-self-generated event cannot produce a second OSD notification.
+The OSD preference is all-or-nothing. When enabled, qwitch shows one OSD for
+every actual layout change: global switches, automatic app or window restores,
+and native XKB group-toggle changes. When disabled, no layout change produces
+an OSD. The notification follows qwitch's authoritative active-layout state,
+so duplicate compositor events from virtual keyboards do not duplicate it.
 
 ## Install
 

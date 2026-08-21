@@ -703,8 +703,7 @@ Panel {
                 required property var modelData
                 required property int index
                 width: layoutPickerColumn.width
-                text: root.displayFor(modelData,
-                  root.settings ? root.settings.displayMode : "both")
+                text: root.displayFor(modelData, "both")
                 iconText: root.service && root.service.activeIndex === index
                   && root.service.mixedState !== true ? "󰄬" : ""
                 leftAlign: true

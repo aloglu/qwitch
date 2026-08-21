@@ -150,6 +150,18 @@ test("bar clicks cycle layouts and reserve the menu for right click", () => {
   assert.doesNotMatch(barWidget, /Qt\.RightButton\) root\.openSettings\(\)/)
 })
 
+test("the layout menu always renders flag and text", () => {
+  assert.match(panel, /text: root\.displayFor\(modelData, "both"\)/)
+  assert.doesNotMatch(panel,
+    /text: root\.displayFor\(modelData,\s*root\.settings \? root\.settings\.displayMode/)
+})
+
+test("every bar instance renders the singleton service's active layout", () => {
+  assert.match(barWidget, /shell\.serviceFor\(root\.moduleName\)/)
+  assert.match(barWidget, /root\.service\.activeLayout/)
+  assert.match(barWidget, /root\.service\.mixedState === true/)
+})
+
 test("panel headers and mixed control rows use compact aligned geometry", () => {
   assert.doesNotMatch(panel, /PanelHero\s*\{/)
   assert.match(panel, /id: mainTitle[\s\S]*anchors\.right: settingsButton\.left/)
@@ -193,7 +205,7 @@ test("OSD preferences bypass runtime startup queuing and use Omarchy OSD", () =>
   assert.match(service, /shell\.summon\("omarchy\.osd", JSON\.stringify\(payload\)\)/)
   assert.match(service, /if \(!osdEnabled \|\| !shell \|\| !activeLayout\) return/)
   assert.match(service, /name\.indexOf\("activelayout"\)[\s\S]*_showOsdAfterExternalRefresh = true/)
-  assert.match(service, /if \(showExternalOsd\) \{[\s\S]*Qt\.callLater\(root\.showLayoutOsd\)/)
+  assert.match(service, /if \(showExternalOsd\) Qt\.callLater\(root\.showLayoutOsd\)/)
 })
 
 test("per-application memory is opt-in and driven by native toplevel focus", () => {
@@ -204,6 +216,8 @@ test("per-application memory is opt-in and driven by native toplevel focus", () 
   assert.match(service, /Model\.applicationLayoutIndex\(settings\.applicationLayouts/)
   assert.match(service, /switchTo\(target, false, false\)/)
   assert.match(service, /rememberApplicationLayout\(root\._switchTarget, root\._switchApplicationId\)/)
+  assert.match(service, /var learnedExternalLayout = mayLearnExternalLayout/)
+  assert.match(service, /if \(learnedExternalLayout\) root\.rememberApplicationLayout\(root\.activeIndex\)/)
   assert.match(panel, /value: String\(root\.draft\.applicationMode \|\| "global"\)/)
   assert.match(panel, /value: "global", label: "Global"/)
   assert.match(panel, /value: "remember", label: "Remember by app"/)

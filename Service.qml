@@ -612,6 +612,10 @@ Item {
       applySettings(queued, true)
     }
 
+    var previouslyObservedIndex = activeIndex
+    var previouslyObservedMixed = mixedState
+    var mayLearnExternalLayout = _runtimeReady && !_layoutPipeline
+      && !_rebaseAfterReload && !_superseded
     var keyboards = Array.isArray(payload.keyboards) ? payload.keyboards : []
     var overrides = settings && settings.deviceOverrides ? settings.deviceOverrides : {}
     var next = []
@@ -650,6 +654,9 @@ Item {
 
     devices = next
     recomputeLayouts()
+    var learnedExternalLayout = mayLearnExternalLayout
+      && !mixedState && activeIndex >= 0
+      && (previouslyObservedMixed || activeIndex !== previouslyObservedIndex)
     var showExternalOsd = _showOsdAfterExternalRefresh
       && !mixedState && activeIndex >= 0
       && (_externalRefreshPreviousMixed || activeIndex !== _externalRefreshPreviousIndex)
@@ -664,13 +671,11 @@ Item {
     }
     finishDeviceRefresh()
 
-    // Native XKB group toggles change Hyprland directly rather than entering
-    // switchTo(). Once the refreshed state is known, route those changes
-    // through the same native Omarchy OSD used by qwitch-owned shortcuts.
-    if (showExternalOsd) {
-      root.rememberApplicationLayout(root.activeIndex)
-      Qt.callLater(root.showLayoutOsd)
-    }
+    // Native XKB group toggles and other compositor-side changes do not enter
+    // switchTo(). Learn any coherent externally observed change independently
+    // of whether its Hyprland event also requested an OSD notification.
+    if (learnedExternalLayout) root.rememberApplicationLayout(root.activeIndex)
+    if (showExternalOsd) Qt.callLater(root.showLayoutOsd)
 
     if (_superseded) return
 

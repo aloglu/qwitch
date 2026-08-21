@@ -34,6 +34,9 @@ Quickshell's native active-toplevel information to associate an application ID
 with the last layout selected while that application was focused. Returning to
 the application restores that layout silently. Switching back to **Global**
 stops application-specific restores without discarding the saved associations.
+Every bar instance reads the active layout from qwitch's singleton service, so
+an application-specific restore updates the displayed bar layout on every
+monitor at the same time.
 
 ## Install
 

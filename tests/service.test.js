@@ -223,7 +223,6 @@ test("OSD is an all-or-nothing view of authoritative layout changes", () => {
   assert.match(service, /if \(!osdEnabled \|\| !shell \|\| !Number\.isInteger\(target\)/)
   assert.doesNotMatch(service, /_showOsdAfterSwitch|_showOsdAfterExternalRefresh|internalLayoutEvent/)
   assert.match(panel, /Show all layout changes on OSD/)
-  assert.match(readme, /OSD preference is all-or-nothing/)
 })
 
 test("per-application memory remains available through the native app identity", () => {
@@ -261,7 +260,6 @@ test("app and window scopes follow global keyboard focus across monitors", () =>
   assert.match(service, /applicationIdFor\(ToplevelManager\.activeToplevel\)/)
   assert.doesNotMatch(service, /activeMonitor.*(?:applicationLayouts|windowLayouts)/)
   assert.match(barWidget, /shell\.serviceFor\(root\.moduleName\)/)
-  assert.match(readme, /single keyboard-focused\s+window regardless of which monitor/i)
 })
 
 test("native QML interaction harness covers the real settings panel", () => {

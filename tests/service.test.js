@@ -204,6 +204,8 @@ test("settings reopen at the top and present one authoritative shortcut", () => 
   assert.match(panel, /text: "qwitch: Settings"/)
   assert.match(panel, /text: "qwitch: Layouts"/)
   assert.doesNotMatch(panel, /Changes save automatically/i)
+  assert.doesNotMatch(panel, /Saved automatically/i)
+  assert.doesNotMatch(panel, /saveStatus/)
 })
 
 test("shortcut ownership replaces only the live XKB group toggle", () => {

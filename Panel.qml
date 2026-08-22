@@ -44,7 +44,6 @@ Panel {
   property bool capturingShortcut: false
   property string draftError: ""
   property string shortcutError: ""
-  property string saveStatus: ""
   property var pendingSecurityDevice: null
   property bool draftReady: false
   property bool advancedDevicesVisible: false
@@ -173,7 +172,6 @@ Panel {
     root.pendingSecurityDevice = null
     root.draftError = ""
     root.shortcutError = ""
-    root.saveStatus = ""
     root.advancedDevicesVisible = false
     root.draftReady = true
     if (root.service && typeof root.service.refreshCatalog === "function") root.service.refreshCatalog()
@@ -284,7 +282,6 @@ Panel {
     }
     root.editingLayoutIndex = selectedIndex
     root.draftError = ""
-    root.saveStatus = ""
     root.scheduleAutoSave()
   }
 
@@ -383,7 +380,6 @@ Panel {
     next[key] = value
     root.draft = next
     root.draftError = ""
-    root.saveStatus = ""
     root.scheduleAutoSave()
   }
 
@@ -588,7 +584,6 @@ Panel {
     var validation = validateDraft()
     if (validation) {
       root.draftError = validation
-      root.saveStatus = ""
       return
     }
     if (!root.hostWidget || typeof root.hostWidget.persistSettings !== "function") {
@@ -618,7 +613,6 @@ Panel {
     root.draft = clone(candidate, candidate)
     root.draftError = ""
     root.shortcutError = ""
-    root.saveStatus = "Saved automatically"
   }
 
   Timer {
@@ -1512,15 +1506,6 @@ Panel {
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
-          }
-
-          Text {
-            visible: root.saveStatus !== ""
-            width: parent.width
-            text: root.saveStatus
-            color: root.contentForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
           }
 
           Button {

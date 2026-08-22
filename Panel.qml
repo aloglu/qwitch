@@ -43,6 +43,9 @@ Panel {
   property string selectedCatalogValue: ""
   property bool capturingShortcut: false
   property var recordingChord: []
+  property bool recordingSnapshotReady: false
+  property var recordingOriginalShortcut: null
+  property string recordingOriginalNativeXkbOption: ""
   property string draftError: ""
   property string shortcutError: ""
   property var pendingSecurityDevice: null
@@ -162,6 +165,9 @@ Panel {
     root.selectedCatalogValue = ""
     root.capturingShortcut = false
     root.recordingChord = []
+    root.recordingSnapshotReady = false
+    root.recordingOriginalShortcut = null
+    root.recordingOriginalNativeXkbOption = ""
     root.pendingSecurityDevice = null
     root.draftError = ""
     root.shortcutError = ""
@@ -208,6 +214,10 @@ Panel {
 
   function close() {
     root.capturingShortcut = false
+    root.recordingChord = []
+    root.recordingSnapshotReady = false
+    root.recordingOriginalShortcut = null
+    root.recordingOriginalNativeXkbOption = ""
     root.pendingSecurityDevice = null
     root.settingsPage = false
     settingsScroll.contentY = 0
@@ -226,6 +236,10 @@ Panel {
       root.saveSettings()
     }
     root.capturingShortcut = false
+    root.recordingChord = []
+    root.recordingSnapshotReady = false
+    root.recordingOriginalShortcut = null
+    root.recordingOriginalNativeXkbOption = ""
     root.pendingSecurityDevice = null
     root.settingsPage = false
     settingsScroll.contentY = 0
@@ -450,6 +464,7 @@ Panel {
   function chooseNativeShortcut(option) {
     root.capturingShortcut = false
     root.recordingChord = []
+    root.recordingSnapshotReady = false
     root.shortcutError = ""
     var next = clone(root.draft, ({}))
     next.shortcut = null
@@ -460,6 +475,7 @@ Panel {
 
   function chooseRecordedShortcut(shortcut) {
     root.recordingChord = []
+    root.recordingSnapshotReady = false
     var next = clone(root.draft, ({}))
     next.shortcut = clone(shortcut, null)
     next.nativeXkbOption = ""
@@ -499,6 +515,43 @@ Panel {
     return merged
   }
 
+  function snapshotShortcutRecording() {
+    root.recordingOriginalShortcut = clone(root.draft.shortcut, null)
+    root.recordingOriginalNativeXkbOption = String(root.draft.nativeXkbOption || "")
+    root.recordingSnapshotReady = true
+  }
+
+  function beginShortcutRecording() {
+    if (autoSaveTimer.running) {
+      autoSaveTimer.stop()
+      root.saveSettings()
+    }
+    root.snapshotShortcutRecording()
+    root.recordingChord = []
+    root.shortcutError = ""
+    root.capturingShortcut = true
+    Qt.callLater(function() { shortcutField.forceActiveFocus() })
+  }
+
+  function cancelShortcutRecording() {
+    root.restoreRejectedShortcut("")
+  }
+
+  function restoreRejectedShortcut(message) {
+    if (root.recordingSnapshotReady) {
+      var restored = clone(root.draft, ({}))
+      restored.shortcut = clone(root.recordingOriginalShortcut, null)
+      restored.nativeXkbOption = root.recordingOriginalNativeXkbOption
+      root.draft = restored
+    }
+    root.capturingShortcut = false
+    root.recordingChord = []
+    root.recordingSnapshotReady = false
+    root.recordingOriginalShortcut = null
+    root.recordingOriginalNativeXkbOption = ""
+    root.shortcutError = String(message || "")
+  }
+
   function finishModifierShortcut(event) {
     if (!root.capturingShortcut || !root.isModifierKey(event.key)
         || root.recordingChord.length === 0) return
@@ -506,9 +559,7 @@ Panel {
     if (nativeOption) {
       root.chooseNativeShortcut(nativeOption)
     } else {
-      root.capturingShortcut = false
-      root.shortcutError = "That modifier-only combination is not available as a native XKB layout shortcut. Record a supported modifier combination or include a non-modifier key."
-      root.recordingChord = []
+      root.restoreRejectedShortcut("That modifier-only combination is not available as a native XKB layout shortcut. Record a supported modifier combination or include a non-modifier key.")
     }
     event.accepted = true
   }
@@ -554,10 +605,9 @@ Panel {
 
   function recordShortcut(event) {
     if (!root.capturingShortcut) return
+    if (!root.recordingSnapshotReady) root.snapshotShortcutRecording()
     if (event.key === Qt.Key_Escape && event.modifiers === Qt.NoModifier) {
-      root.capturingShortcut = false
-      root.recordingChord = []
-      root.shortcutError = ""
+      root.cancelShortcutRecording()
       event.accepted = true
       return
     }
@@ -655,7 +705,6 @@ Panel {
     root.hostWidget.persistSettings(candidate)
     root.draft = clone(candidate, candidate)
     root.draftError = ""
-    root.shortcutError = ""
   }
 
   Timer {
@@ -1311,11 +1360,8 @@ Panel {
               anchors.rightMargin: Style.space(6)
               anchors.verticalCenter: parent.verticalCenter
               onClicked: {
-                root.capturingShortcut = !root.capturingShortcut
-                root.recordingChord = []
-                root.shortcutError = ""
-                if (root.capturingShortcut)
-                  Qt.callLater(function() { shortcutField.forceActiveFocus() })
+                if (root.capturingShortcut) root.cancelShortcutRecording()
+                else root.beginShortcutRecording()
               }
             }
 

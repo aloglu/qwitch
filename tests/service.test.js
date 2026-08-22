@@ -199,6 +199,8 @@ test("settings reopen at the top and present one authoritative shortcut", () => 
   assert.match(panel, /chooseRecordedShortcut\(shortcut\)/)
   assert.match(panel, /Model\.nativeXkbOptionForChord\(root\.recordingChord\)/)
   assert.match(panel, /That modifier-only combination is not available as a native XKB/)
+  assert.match(panel, /function snapshotShortcutRecording\(\)/)
+  assert.match(panel, /function restoreRejectedShortcut\(message\)/)
   assert.doesNotMatch(panel, /Ctrl \+ Alt \+ Shift/)
   assert.doesNotMatch(panel, /Both shortcut sources are configured:/)
   assert.match(panel, /settingsScroll\.contentY = 0/)

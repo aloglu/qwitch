@@ -7,17 +7,6 @@
 
 var DISPLAY_MODES = ["text", "flag", "both"];
 var LAYOUT_SCOPES = ["global", "application", "window"];
-var MODIFIER_ORDER = ["SUPER", "CTRL", "ALT", "SHIFT", "CAPS", "MOD2", "MOD3", "MOD5"];
-var MODIFIER_BITS = {
-    SHIFT: 1,
-    CAPS: 2,
-    CTRL: 4,
-    ALT: 8,
-    MOD2: 16,
-    MOD3: 32,
-    SUPER: 64,
-    MOD5: 128
-};
 
 function own(object, key) {
     return object !== null && object !== undefined && Object.prototype.hasOwnProperty.call(object, key);
@@ -300,308 +289,6 @@ function parseXkbCatalog(text) {
     return layouts;
 }
 
-function modifierAlias(value) {
-    var key = trimmed(value).toUpperCase().replace(/[ _-]+/g, "");
-    var aliases = {
-        SUPER: "SUPER",
-        META: "SUPER",
-        LOGO: "SUPER",
-        WIN: "SUPER",
-        WINDOWS: "SUPER",
-        MOD4: "SUPER",
-        CTRL: "CTRL",
-        CONTROL: "CTRL",
-        ALT: "ALT",
-        MOD1: "ALT",
-        SHIFT: "SHIFT",
-        CAPS: "CAPS",
-        CAPSLOCK: "CAPS",
-        MOD2: "MOD2",
-        NUM: "MOD2",
-        NUMLOCK: "MOD2",
-        MOD3: "MOD3",
-        MOD5: "MOD5"
-    };
-    return aliases[key] || "";
-}
-
-function modifierValues(value) {
-    if (Array.isArray(value))
-        return value.slice();
-    if (typeof value === "string")
-        return value.split(/[+,|\s]+/).filter(function(part) { return part !== ""; });
-    return [];
-}
-
-function modifiersFromMask(mask) {
-    var number = Number(mask);
-    if (!isFinite(number) || number < 0)
-        return [];
-    var result = [];
-    for (var index = 0; index < MODIFIER_ORDER.length; index += 1) {
-        var name = MODIFIER_ORDER[index];
-        if ((number & MODIFIER_BITS[name]) !== 0)
-            result.push(name);
-    }
-    return result;
-}
-
-function shortcutModifierInput(value) {
-    if (!isObject(value))
-        return [];
-    var result = [];
-    if (own(value, "modifiers"))
-        result = result.concat(modifierValues(value.modifiers));
-    else if (own(value, "mods"))
-        result = result.concat(modifierValues(value.mods));
-    else if (own(value, "modifier"))
-        result = result.concat(modifierValues(value.modifier));
-    if (own(value, "modmask"))
-        result = result.concat(modifiersFromMask(value.modmask));
-
-    // Hyprland 0.56's JSON output can omit the physical chord. Its text
-    // output retains forms such as `SUPER + CTRL + code:10`, so accept the
-    // modifier tokens embedded in a parsed key field as well.
-    if (typeof value.key === "string" && value.key.indexOf("+") >= 0) {
-        var chordParts = value.key.split("+");
-        for (var index = 0; index < chordParts.length; index += 1) {
-            if (modifierAlias(chordParts[index]))
-                result.push(chordParts[index]);
-        }
-    }
-    return result;
-}
-
-function normalizeModifiers(values) {
-    var present = {};
-    for (var index = 0; index < values.length; index += 1) {
-        var canonical = modifierAlias(values[index]);
-        if (canonical)
-            present[canonical] = true;
-    }
-    return MODIFIER_ORDER.filter(function(name) { return present[name] === true; });
-}
-
-function physicalCode(value) {
-    var candidate = value;
-    if (typeof candidate === "string") {
-        var codeMatch = /^code\s*:\s*(\d+)$/i.exec(trimmed(candidate));
-        if (codeMatch)
-            candidate = codeMatch[1];
-    }
-    var number = Number(candidate);
-    if (!isFinite(number) || Math.floor(number) !== number || number < 1 || number > 767)
-        return 0;
-    return number;
-}
-
-function shortcutCode(value) {
-    if (!isObject(value))
-        return 0;
-    var candidates = ["code", "keycode", "scanCode", "nativeScanCode"];
-    for (var index = 0; index < candidates.length; index += 1) {
-        if (own(value, candidates[index])) {
-            var explicitCode = physicalCode(value[candidates[index]]);
-            if (explicitCode)
-                return explicitCode;
-        }
-    }
-    if (typeof value.key === "string") {
-        var chordCode = /(?:^|\+)\s*code\s*:\s*(\d+)\s*(?:$|\+)/i.exec(value.key);
-        if (chordCode)
-            return physicalCode(chordCode[1]);
-    }
-    return physicalCode(value.key);
-}
-
-function shortcutKey(value, code) {
-    if (!isObject(value))
-        return "";
-    var candidate = value.keyName || value.readableKey || value.label || value.key || "";
-    candidate = cleanText(candidate, 64);
-    if (/(?:^|\+)\s*code\s*:\s*\d+\s*(?:$|\+)/i.test(candidate))
-        candidate = "";
-    return candidate || (code ? "Key " + code : "");
-}
-
-function normalizeShortcut(value) {
-    if (!isObject(value))
-        return null;
-    var code = shortcutCode(value);
-    var key = shortcutKey(value, code);
-    if (!code || !key)
-        return null;
-    return {
-        modifiers: normalizeModifiers(shortcutModifierInput(value)),
-        key: key,
-        code: code
-    };
-}
-
-function isModifierKey(key) {
-    var value = trimmed(key).toUpperCase().replace(/[ _-]+/g, "");
-    return /^(SHIFT|SHIFTL|SHIFTR|CTRL|CONTROL|CONTROLL|CONTROLR|ALT|ALTL|ALTR|SUPER|SUPERL|SUPERR|META|METAL|METAR|LOGO|HYPER|CAPSLOCK|NUMLOCK|MOD[1-5])$/.test(value);
-}
-
-function isFunctionOrMediaKey(key) {
-    var value = trimmed(key).toUpperCase().replace(/[ _-]+/g, "");
-    if (/^F(?:[1-9]|[12][0-9]|3[0-5])$/.test(value))
-        return true;
-    if (/^(XF86)?(?:AUDIO|MEDIA|VOLUME|MONBRIGHTNESS|KBDBRIGHTNESS|BRIGHTNESS|PLAY|PAUSE|NEXT|PREV|STOP|MUTE|MICMUTE|CALCULATOR|MAIL|WWW|SEARCH|LAUNCH|POWER|SLEEP|WAKE)/.test(value))
-        return true;
-    return /^(PRINT|PRINTSCREEN|PAUSE|SCROLLLOCK)$/.test(value);
-}
-
-function validateShortcut(value) {
-    if (!isObject(value))
-        return "Choose a shortcut.";
-
-    var rawModifiers = shortcutModifierInput(value);
-    for (var index = 0; index < rawModifiers.length; index += 1) {
-        if (!modifierAlias(rawModifiers[index]))
-            return "Unknown modifier: " + cleanText(rawModifiers[index], 32) + ".";
-    }
-
-    var code = shortcutCode(value);
-    var key = shortcutKey(value, code);
-    if (!key)
-        return "Choose a key.";
-    if (isModifierKey(key))
-        return "Modifier-only shortcuts are not supported.";
-    if (!code)
-        return "A physical keycode is required.";
-
-    var modifiers = normalizeModifiers(rawModifiers);
-    if (modifiers.length === 0 && !isFunctionOrMediaKey(key))
-        return "Add a modifier, or choose a function or media key.";
-    return "";
-}
-
-function shortcutIdentity(value) {
-    var normalized = normalizeShortcut(value);
-    if (!normalized)
-        return "";
-    return normalized.modifiers.join("+") + "|code:" + normalized.code;
-}
-
-function shortcutsConflict(shortcut, binding) {
-    if (!isObject(shortcut) || !isObject(binding))
-        return false;
-    var firstModifiers = normalizeModifiers(shortcutModifierInput(shortcut)).join("+");
-    var secondModifiers = normalizeModifiers(shortcutModifierInput(binding)).join("+");
-    if (firstModifiers !== secondModifiers)
-        return false;
-
-    var firstCode = shortcutCode(shortcut);
-    var secondCode = shortcutCode(binding);
-    if (firstCode && secondCode)
-        return firstCode === secondCode;
-
-    function symbolicKey(value) {
-        var key = cleanText(value.keyName || value.readableKey || value.label || value.key, 64);
-        var pieces = key.split("+");
-        for (var index = pieces.length - 1; index >= 0; index -= 1) {
-            var piece = trimmed(pieces[index]);
-            if (!piece || modifierAlias(piece) || /^code\s*:/i.test(piece))
-                continue;
-            var normalized = piece.toUpperCase().replace(/[^A-Z0-9]/g, "");
-            var aliases = {
-                ENTER: "RETURN",
-                KPENTER: "RETURN",
-                BACKTAB: "TAB",
-                ISOLEFTTAB: "TAB",
-                VOLUMEUP: "AUDIOVOLUMEUP",
-                XF86AUDIORAISEVOLUME: "AUDIOVOLUMEUP",
-                VOLUMEDOWN: "AUDIOVOLUMEDOWN",
-                XF86AUDIOLOWERVOLUME: "AUDIOVOLUMEDOWN",
-                VOLUMEMUTE: "AUDIOVOLUMEMUTE",
-                XF86AUDIOMUTE: "AUDIOVOLUMEMUTE",
-                MEDIAPLAY: "AUDIOPLAY",
-                XF86AUDIOPLAY: "AUDIOPLAY",
-                MEDIAPAUSE: "AUDIOPAUSE",
-                XF86AUDIOPAUSE: "AUDIOPAUSE",
-                MEDIASTOP: "AUDIOSTOP",
-                XF86AUDIOSTOP: "AUDIOSTOP",
-                MEDIAPREVIOUS: "AUDIOPREV",
-                XF86AUDIOPREV: "AUDIOPREV",
-                MEDIANEXT: "AUDIONEXT",
-                XF86AUDIONEXT: "AUDIONEXT",
-                MONBRIGHTNESSUP: "MONBRIGHTNESSUP",
-                XF86MONBRIGHTNESSUP: "MONBRIGHTNESSUP",
-                MONBRIGHTNESSDOWN: "MONBRIGHTNESSDOWN",
-                XF86MONBRIGHTNESSDOWN: "MONBRIGHTNESSDOWN",
-                KBDBRIGHTNESSUP: "KBDBRIGHTNESSUP",
-                XF86KBDBRIGHTNESSUP: "KBDBRIGHTNESSUP",
-                KBDBRIGHTNESSDOWN: "KBDBRIGHTNESSDOWN",
-                XF86KBDBRIGHTNESSDOWN: "KBDBRIGHTNESSDOWN"
-            };
-            return aliases[normalized] || normalized;
-        }
-        return "";
-    }
-
-    var firstKey = symbolicKey(shortcut);
-    var secondKey = symbolicKey(binding);
-    return firstKey !== "" && secondKey !== "" && firstKey === secondKey;
-}
-
-function parseHyprctlBindsText(text) {
-    var lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
-    var bindings = [];
-    var current = null;
-
-    function freshBinding(type) {
-        return {
-            type: type,
-            modmask: 0,
-            submap: "",
-            key: "",
-            keycode: 0,
-            description: "",
-            dispatcher: "",
-            arg: ""
-        };
-    }
-
-    function finish() {
-        if (!current)
-            return;
-        // A malformed diagnostic block without a key is not a binding.
-        if (current.key || current.keycode)
-            bindings.push(current);
-        current = null;
-    }
-
-    for (var index = 0; index < lines.length; index += 1) {
-        var line = lines[index];
-        var header = /^\s*(bind[a-z]*)\s*:?[ \t]*$/i.exec(line);
-        if (header) {
-            finish();
-            current = freshBinding(header[1].toLowerCase());
-            continue;
-        }
-        if (!current)
-            continue;
-
-        var field = /^\s*([A-Za-z_][A-Za-z0-9_]*):[ \t]*(.*)$/.exec(line);
-        if (!field)
-            continue;
-        var name = field[1].toLowerCase();
-        var value = field[2].replace(/[ \t]+$/g, "");
-        if (name === "modmask") {
-            var mask = Number(value);
-            current.modmask = isFinite(mask) && mask >= 0 ? Math.floor(mask) : 0;
-        } else if (name === "keycode") {
-            current.keycode = physicalCode(value);
-        } else if (name === "submap" || name === "key" || name === "description" || name === "dispatcher" || name === "arg") {
-            // Do not tokenize key here: preserving the exact text is the point
-            // of this parser and lets conflict detection recover code:N.
-            current[name] = value;
-        }
-    }
-    finish();
-    return bindings;
-}
 
 function luaQuote(value) {
     var source = String(value === null || value === undefined ? "" : value);
@@ -636,12 +323,10 @@ function defaultSettings() {
         layouts: [],
         displayMode: "both",
         osdEnabled: false,
-        shortcut: null,
         layoutScope: "global",
         applicationLayouts: {},
         deviceOverrides: {},
-        adoptedExistingConfig: false,
-        nativeXkbOption: ""
+        adoptedExistingConfig: false
     };
 }
 
@@ -702,123 +387,47 @@ function applicationLayoutIndex(value, applicationId, layouts) {
     return rememberedLayoutIndex(value, applicationId, layouts);
 }
 
-function sanitizeNativeXkbOption(value) {
-    var option = cleanText(value, 128);
-    return nativeXkbShortcutOptions().some(function(entry) { return entry.value === option; })
-        ? option : "";
-}
-
 function nativeXkbShortcutOptions() {
     return [
         { value: "grp:toggle", label: "Right Alt" },
         { value: "grp:lalt_toggle", label: "Left Alt" },
-        { value: "grp:alt_shift_toggle", label: "Alt + Shift", capture: ["ALT", "SHIFT"] },
+        { value: "grp:alt_shift_toggle", label: "Alt + Shift" },
         { value: "grp:lalt_lshift_toggle", label: "Left Alt + Left Shift" },
         { value: "grp:ralt_rshift_toggle", label: "Right Alt + Right Shift" },
         { value: "grp:alt_shift_toggle_bidir", label: "Alt + Shift · directional" },
-        { value: "grp:ctrl_shift_toggle", label: "Ctrl + Shift", capture: ["CTRL", "SHIFT"] },
+        { value: "grp:ctrl_shift_toggle", label: "Ctrl + Shift" },
         { value: "grp:lctrl_lshift_toggle", label: "Left Ctrl + Left Shift" },
         { value: "grp:rctrl_rshift_toggle", label: "Right Ctrl + Right Shift" },
         { value: "grp:ctrl_shift_toggle_bidir", label: "Ctrl + Shift · directional" },
-        { value: "grp:ctrl_alt_toggle", label: "Ctrl + Alt", capture: ["CTRL", "ALT"] },
+        { value: "grp:ctrl_alt_toggle", label: "Ctrl + Alt" },
         { value: "grp:lctrl_lalt_toggle", label: "Left Ctrl + Left Alt" },
         { value: "grp:rctrl_ralt_toggle", label: "Right Ctrl + Right Alt" },
         { value: "grp:ctrl_alt_toggle_bidir", label: "Ctrl + Alt · directional" },
-        { value: "grp:win_space_toggle", label: "Super + Space", capture: ["SUPER", "SPACE"] },
-        { value: "grp:alt_space_toggle", label: "Alt + Space", capture: ["ALT", "SPACE"] },
-        { value: "grp:ctrl_space_toggle", label: "Ctrl + Space", capture: ["CTRL", "SPACE"] },
-        { value: "grp:caps_toggle", label: "Caps Lock", capture: ["CAPSLOCK"] },
-        { value: "grp:shift_caps_toggle", label: "Shift + Caps Lock", capture: ["SHIFT", "CAPSLOCK"] },
-        { value: "grp:alt_caps_toggle", label: "Alt + Caps Lock", capture: ["ALT", "CAPSLOCK"] },
+        { value: "grp:win_space_toggle", label: "Super + Space" },
+        { value: "grp:alt_space_toggle", label: "Alt + Space" },
+        { value: "grp:ctrl_space_toggle", label: "Ctrl + Space" },
+        { value: "grp:caps_toggle", label: "Caps Lock" },
+        { value: "grp:shift_caps_toggle", label: "Shift + Caps Lock" },
+        { value: "grp:alt_caps_toggle", label: "Alt + Caps Lock" },
         { value: "grp:shifts_toggle", label: "Both Shift keys" },
         { value: "grp:alts_toggle", label: "Both Alt keys" },
         { value: "grp:alt_altgr_toggle", label: "Both Alt keys · preserve AltGr" },
         { value: "grp:ctrls_toggle", label: "Both Ctrl keys" },
-        { value: "grp:menu_toggle", label: "Menu", capture: ["MENU"] },
+        { value: "grp:menu_toggle", label: "Menu" },
         { value: "grp:lwin_toggle", label: "Left Super" },
         { value: "grp:rwin_toggle", label: "Right Super" },
         { value: "grp:lshift_toggle", label: "Left Shift" },
         { value: "grp:rshift_toggle", label: "Right Shift" },
         { value: "grp:lctrl_toggle", label: "Left Ctrl" },
         { value: "grp:rctrl_toggle", label: "Right Ctrl" },
-        { value: "grp:sclk_toggle", label: "Scroll Lock", capture: ["SCROLLLOCK"] },
+        { value: "grp:sclk_toggle", label: "Scroll Lock" },
         { value: "grp:lctrl_lwin_toggle", label: "Left Ctrl + Left Super" }
     ];
 }
 
-function nativeXkbOptionForChord(parts) {
-    var order = ["SUPER", "CTRL", "ALT", "SHIFT", "SPACE", "CAPSLOCK", "MENU", "SCROLLLOCK"];
-    var seen = {};
-    var normalized = [];
-    (Array.isArray(parts) ? parts : []).forEach(function(part) {
-        var value = String(part || "").trim().toUpperCase().replace(/[ _-]/g, "");
-        if (order.indexOf(value) === -1 || seen[value]) return;
-        seen[value] = true;
-        normalized.push(value);
-    });
-    normalized.sort(function(left, right) { return order.indexOf(left) - order.indexOf(right); });
-    var signature = normalized.join("+");
-    var options = nativeXkbShortcutOptions();
-    for (var index = 0; index < options.length; index += 1) {
-        var capture = Array.isArray(options[index].capture) ? options[index].capture.slice() : [];
-        capture.sort(function(left, right) { return order.indexOf(left) - order.indexOf(right); });
-        if (capture.length > 0 && capture.join("+") === signature)
-            return options[index].value;
-    }
-    return "";
-}
-
-function conflictingXkbOptionPrefixes(parts) {
-    var prefixes = [];
-    var byKey = {
-        SUPER: ["altwin:alt_win", "altwin:ctrl_win", "altwin:ctrl_rwin", "altwin:ctrl_alt_win", "altwin:meta_win", "altwin:left_meta_win", "altwin:hyper_win", "altwin:alt_super_win", "altwin:swap_lalt_lwin", "altwin:swap_ralt_rwin", "altwin:swap_alt_win", "altwin:prtsc_rwin", "compose:lwin", "compose:rwin", "lv3:win", "lv3:lwin", "lv3:rwin", "lv5:lwin", "lv5:rwin"],
-        CTRL: ["ctrl:lctrl_meta", "ctrl:swapcaps", "ctrl:grouptoggle_capscontrol", "ctrl:hyper_capscontrol", "ctrl:ac_ctrl", "ctrl:aa_ctrl", "ctrl:rctrl_ralt", "ctrl:ralt_rctrl", "ctrl:swap_lalt_lctl", "ctrl:swap_ralt_rctl", "ctrl:swap_lwin_lctl", "ctrl:swap_rwin_rctl", "ctrl:swap_lalt_lctl_lwin", "compose:lctrl", "compose:rctrl", "lv3:switch", "lv5:rctrl"],
-        ALT: ["altwin:meta_alt", "altwin:alt_win", "altwin:ctrl_alt_win", "altwin:alt_super_win", "altwin:swap_lalt_lwin", "altwin:swap_ralt_rwin", "altwin:swap_alt_win", "compose:ralt", "lv3:alt", "lv3:lalt", "lv3:ralt", "lv5:ralt"],
-        SHIFT: ["shift:"],
-        SPACE: ["nbsp:"],
-        CAPSLOCK: ["caps:", "compose:caps", "lv3:caps", "lv5:caps"],
-        MENU: ["altwin:menu", "compose:menu", "lv3:menu", "lv5:menu"],
-        SCROLLLOCK: ["compose:sclk"]
-    };
-    (Array.isArray(parts) ? parts : []).forEach(function(part) {
-        var values = byKey[String(part || "").toUpperCase()] || [];
-        values.forEach(function(prefix) {
-            if (prefixes.indexOf(prefix) === -1) prefixes.push(prefix);
-        });
-    });
-    return prefixes;
-}
-
-function withoutConflictingXkbOptions(value, option) {
-    var selected = sanitizeNativeXkbOption(option);
-    var entry = nativeXkbShortcutOptions().find(function(candidate) {
-        return candidate.value === selected;
-    });
-    var prefixes = conflictingXkbOptionPrefixes(entry && entry.capture);
-    return withoutGroupToggle(value).split(",").map(trimmed).filter(function(candidate) {
-        return candidate && !prefixes.some(function(prefix) {
-            return prefix.charAt(prefix.length - 1) === ":"
-                ? candidate.indexOf(prefix) === 0
-                : candidate === prefix || candidate.indexOf(prefix + "-") === 0
-                  || candidate.indexOf(prefix + "_") === 0
-        });
-    }).join(",");
-}
-
-function withoutGroupToggle(value) {
-    return String(value || "").split(",").map(trimmed).filter(function(option) {
-        return option && !/^grp:[a-z0-9_]+$/i.test(option);
-    }).join(",");
-}
-
-function withGroupToggle(value, option) {
-    var group = sanitizeNativeXkbOption(option);
-    var base = withoutConflictingXkbOptions(value, group);
-    return [base, group].filter(function(part) { return part !== ""; }).join(",");
-}
 
 function nativeXkbShortcutLabel(value) {
-    var option = sanitizeNativeXkbOption(value);
+    var option = cleanText(value, 128);
     var options = nativeXkbShortcutOptions();
     for (var index = 0; index < options.length; index += 1) {
         if (options[index].value === option)
@@ -839,9 +448,8 @@ function parseHyprOptionString(text) {
 function firstGroupToggle(value) {
     var options = String(value || "").split(",");
     for (var index = 0; index < options.length; index += 1) {
-        var option = sanitizeNativeXkbOption(options[index]);
-        if (option)
-            return option;
+        var option = cleanText(options[index], 128);
+        if (nativeXkbShortcutLabel(option)) return option;
     }
     return "";
 }
@@ -869,8 +477,6 @@ function sanitizeSettings(value) {
     if (DISPLAY_MODES.indexOf(source.displayMode) >= 0)
         result.displayMode = source.displayMode;
     result.osdEnabled = source.osdEnabled === true;
-    if (source.shortcut && validateShortcut(source.shortcut) === "")
-        result.shortcut = normalizeShortcut(source.shortcut);
     var layoutScope = source.layoutScope;
     if (LAYOUT_SCOPES.indexOf(layoutScope) < 0) {
         if (source.applicationMode === "remember")
@@ -883,7 +489,6 @@ function sanitizeSettings(value) {
     result.applicationLayouts = sanitizeApplicationLayouts(source.applicationLayouts, result.layouts);
     result.deviceOverrides = sanitizeOverrides(source.deviceOverrides);
     result.adoptedExistingConfig = source.adoptedExistingConfig === true;
-    result.nativeXkbOption = result.shortcut ? "" : sanitizeNativeXkbOption(source.nativeXkbOption);
     return result;
 }
 
@@ -1188,11 +793,6 @@ var exported = {
     inferFlag: inferFlag,
     displayForLayout: displayForLayout,
     luaQuote: luaQuote,
-    normalizeShortcut: normalizeShortcut,
-    validateShortcut: validateShortcut,
-    shortcutIdentity: shortcutIdentity,
-    shortcutsConflict: shortcutsConflict,
-    parseHyprctlBindsText: parseHyprctlBindsText,
     parseProcInputDevices: parseProcInputDevices,
     normalizeDeviceName: normalizeDeviceName,
     matchInputDevice: matchInputDevice,
@@ -1200,11 +800,6 @@ var exported = {
     classifyDevice: classifyDevice,
     parseHyprOptionString: parseHyprOptionString,
     firstGroupToggle: firstGroupToggle,
-    nativeXkbShortcutOptions: nativeXkbShortcutOptions,
-    nativeXkbOptionForChord: nativeXkbOptionForChord,
-    withoutConflictingXkbOptions: withoutConflictingXkbOptions,
-    withoutGroupToggle: withoutGroupToggle,
-    withGroupToggle: withGroupToggle,
     nativeXkbShortcutLabel: nativeXkbShortcutLabel,
     normalizeApplicationId: normalizeApplicationId,
     normalizeWindowAddress: normalizeWindowAddress,

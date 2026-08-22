@@ -41,13 +41,7 @@ Panel {
   property int selectorIndex: 0
   property int editingLayoutIndex: -1
   property string selectedCatalogValue: ""
-  property bool capturingShortcut: false
-  property var recordingChord: []
-  property bool recordingSnapshotReady: false
-  property var recordingOriginalShortcut: null
-  property string recordingOriginalNativeXkbOption: ""
   property string draftError: ""
-  property string shortcutError: ""
   property var pendingSecurityDevice: null
   property bool draftReady: false
   property bool advancedDevicesVisible: false
@@ -64,12 +58,10 @@ Panel {
     layouts: [],
     displayMode: "both",
     osdEnabled: false,
-    shortcut: null,
     layoutScope: "global",
     applicationLayouts: ({}),
     deviceOverrides: ({}),
-    adoptedExistingConfig: false,
-    nativeXkbOption: ""
+    adoptedExistingConfig: false
   })
 
   function arrayFrom(value) {
@@ -154,23 +146,15 @@ Panel {
       layouts: normalized,
       displayMode: mode,
       osdEnabled: source.osdEnabled === true,
-      shortcut: clone(source.shortcut, null),
       layoutScope: root.layoutScopeFrom(source),
       applicationLayouts: clone(objectFrom(source.applicationLayouts), ({})),
       deviceOverrides: clone(objectFrom(source.deviceOverrides), ({})),
-      adoptedExistingConfig: source.adoptedExistingConfig === true,
-      nativeXkbOption: source.shortcut ? "" : String(source.nativeXkbOption || "")
+      adoptedExistingConfig: source.adoptedExistingConfig === true
     }
     root.editingLayoutIndex = normalized.length > 0 ? 0 : -1
     root.selectedCatalogValue = ""
-    root.capturingShortcut = false
-    root.recordingChord = []
-    root.recordingSnapshotReady = false
-    root.recordingOriginalShortcut = null
-    root.recordingOriginalNativeXkbOption = ""
     root.pendingSecurityDevice = null
     root.draftError = ""
-    root.shortcutError = ""
     root.advancedDevicesVisible = false
     root.draftReady = true
     if (root.service && typeof root.service.refreshCatalog === "function") root.service.refreshCatalog()
@@ -213,11 +197,6 @@ Panel {
   }
 
   function close() {
-    root.capturingShortcut = false
-    root.recordingChord = []
-    root.recordingSnapshotReady = false
-    root.recordingOriginalShortcut = null
-    root.recordingOriginalNativeXkbOption = ""
     root.pendingSecurityDevice = null
     root.settingsPage = false
     settingsScroll.contentY = 0
@@ -235,11 +214,6 @@ Panel {
       autoSaveTimer.stop()
       root.saveSettings()
     }
-    root.capturingShortcut = false
-    root.recordingChord = []
-    root.recordingSnapshotReady = false
-    root.recordingOriginalShortcut = null
-    root.recordingOriginalNativeXkbOption = ""
     root.pendingSecurityDevice = null
     root.settingsPage = false
     settingsScroll.contentY = 0
@@ -280,12 +254,10 @@ Panel {
       layouts: layouts,
       displayMode: String(root.draft.displayMode || "both"),
       osdEnabled: root.draft.osdEnabled === true,
-      shortcut: clone(root.draft.shortcut, null),
       layoutScope: String(root.draft.layoutScope || "global"),
       applicationLayouts: clone(objectFrom(root.draft.applicationLayouts), ({})),
       deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
-      adoptedExistingConfig: root.draft.adoptedExistingConfig === true,
-      nativeXkbOption: root.draft.shortcut ? "" : String(root.draft.nativeXkbOption || "")
+      adoptedExistingConfig: root.draft.adoptedExistingConfig === true
     }
     root.editingLayoutIndex = selectedIndex
     root.draftError = ""
@@ -437,223 +409,12 @@ Panel {
       && deviceFingerprint(root.pendingSecurityDevice) === deviceFingerprint(device)
   }
 
-  function shortcutSummary(shortcut) {
-    if (!shortcut) return "Not assigned"
-    if (typeof shortcut === "string") return shortcut || "Not assigned"
-    var parts = arrayFrom(shortcut.modifiers)
-    var key = String(shortcut.key || shortcut.name || "")
-    if (key) parts.push(key)
-    return parts.length > 0 ? parts.join(" + ") : "Not assigned"
-  }
-
-  function displayedShortcut() {
-    if (root.draft.shortcut) return root.shortcutSummary(root.draft.shortcut)
-    var nativeLabel = root.nativeShortcutSummary()
-    return nativeLabel || "Not assigned"
-  }
-
-  function nativeShortcutSummary() {
-    var nativeOption = String(root.draft.nativeXkbOption || "")
-    if (!nativeOption && root.service)
-      return String(root.service.nativeShortcutLabel || "")
-    if (!nativeOption) return ""
-    var label = String(Model.nativeXkbShortcutLabel(nativeOption) || "")
-    return label || nativeOption
-  }
-
-  function chooseNativeShortcut(option) {
-    root.capturingShortcut = false
-    root.recordingChord = []
-    root.recordingSnapshotReady = false
-    root.shortcutError = ""
-    var next = clone(root.draft, ({}))
-    next.shortcut = null
-    next.nativeXkbOption = String(option || "")
-    root.draft = next
-    root.scheduleAutoSave()
-  }
-
-  function chooseRecordedShortcut(shortcut) {
-    root.recordingChord = []
-    root.recordingSnapshotReady = false
-    var next = clone(root.draft, ({}))
-    next.shortcut = clone(shortcut, null)
-    next.nativeXkbOption = ""
-    root.draft = next
-    root.scheduleAutoSave()
-  }
-
-  function isModifierKey(key) {
-    return key === Qt.Key_Shift || key === Qt.Key_Control || key === Qt.Key_Meta
-      || key === Qt.Key_Alt || key === Qt.Key_AltGr || key === Qt.Key_CapsLock
-  }
-
-  function chordParts(event) {
-    var parts = []
-    if (event.modifiers & Qt.MetaModifier) parts.push("SUPER")
-    if (event.modifiers & Qt.ControlModifier) parts.push("CTRL")
-    if (event.modifiers & Qt.AltModifier) parts.push("ALT")
-    if (event.modifiers & Qt.ShiftModifier) parts.push("SHIFT")
-    if (event.key === Qt.Key_Meta && parts.indexOf("SUPER") === -1) parts.push("SUPER")
-    if (event.key === Qt.Key_Control && parts.indexOf("CTRL") === -1) parts.push("CTRL")
-    if ((event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr)
-        && parts.indexOf("ALT") === -1) parts.push("ALT")
-    if (event.key === Qt.Key_Shift && parts.indexOf("SHIFT") === -1) parts.push("SHIFT")
-    if (event.key === Qt.Key_CapsLock) parts.push("CAPSLOCK")
-    if (event.key === Qt.Key_Space) parts.push("SPACE")
-    if (event.key === Qt.Key_Menu) parts.push("MENU")
-    if (event.key === Qt.Key_ScrollLock) parts.push("SCROLLLOCK")
-    return parts
-  }
-
-  function mergedChordParts(parts, event) {
-    var merged = Array.isArray(parts) ? parts.slice() : []
-    var current = chordParts(event)
-    for (var i = 0; i < current.length; i++) {
-      if (merged.indexOf(current[i]) === -1) merged.push(current[i])
-    }
-    return merged
-  }
-
-  function snapshotShortcutRecording() {
-    root.recordingOriginalShortcut = clone(root.draft.shortcut, null)
-    root.recordingOriginalNativeXkbOption = String(root.draft.nativeXkbOption || "")
-    root.recordingSnapshotReady = true
-  }
-
-  function beginShortcutRecording() {
-    if (autoSaveTimer.running) {
-      autoSaveTimer.stop()
-      root.saveSettings()
-    }
-    root.snapshotShortcutRecording()
-    root.recordingChord = []
-    root.shortcutError = ""
-    root.capturingShortcut = true
-    Qt.callLater(function() { shortcutField.forceActiveFocus() })
-  }
-
-  function cancelShortcutRecording() {
-    root.restoreRejectedShortcut("")
-  }
-
-  function restoreRejectedShortcut(message) {
-    if (root.recordingSnapshotReady) {
-      var restored = clone(root.draft, ({}))
-      restored.shortcut = clone(root.recordingOriginalShortcut, null)
-      restored.nativeXkbOption = root.recordingOriginalNativeXkbOption
-      root.draft = restored
-    }
-    root.capturingShortcut = false
-    root.recordingChord = []
-    root.recordingSnapshotReady = false
-    root.recordingOriginalShortcut = null
-    root.recordingOriginalNativeXkbOption = ""
-    root.shortcutError = String(message || "")
-  }
-
-  function finishModifierShortcut(event) {
-    if (!root.capturingShortcut || !root.isModifierKey(event.key)
-        || root.recordingChord.length === 0) return
-    var nativeOption = Model.nativeXkbOptionForChord(root.recordingChord)
-    if (nativeOption) {
-      root.chooseNativeShortcut(nativeOption)
-    } else {
-      root.restoreRejectedShortcut("That modifier-only combination is not available as a native XKB layout shortcut. Record a supported modifier combination or include a non-modifier key.")
-    }
-    event.accepted = true
-  }
-
-  function keyName(event) {
-    var key = Number(event.key)
-    if (key >= Qt.Key_A && key <= Qt.Key_Z) return String.fromCharCode(key)
-    if (key >= Qt.Key_0 && key <= Qt.Key_9) return String.fromCharCode(key)
-    if (key >= Qt.Key_F1 && key <= Qt.Key_F35) return "F" + String(key - Qt.Key_F1 + 1)
-    if (key === Qt.Key_Space) return "Space"
-    if (key === Qt.Key_Escape) return "Escape"
-    if (key === Qt.Key_Tab) return "Tab"
-    if (key === Qt.Key_Backtab) return "Backtab"
-    if (key === Qt.Key_Return || key === Qt.Key_Enter) return "Enter"
-    if (key === Qt.Key_Backspace) return "Backspace"
-    if (key === Qt.Key_Delete) return "Delete"
-    if (key === Qt.Key_Insert) return "Insert"
-    if (key === Qt.Key_Home) return "Home"
-    if (key === Qt.Key_End) return "End"
-    if (key === Qt.Key_PageUp) return "PageUp"
-    if (key === Qt.Key_PageDown) return "PageDown"
-    if (key === Qt.Key_Left) return "Left"
-    if (key === Qt.Key_Right) return "Right"
-    if (key === Qt.Key_Up) return "Up"
-    if (key === Qt.Key_Down) return "Down"
-    if (key === Qt.Key_Print) return "Print"
-    if (key === Qt.Key_Pause) return "Pause"
-    if (key === Qt.Key_VolumeMute) return "VolumeMute"
-    if (key === Qt.Key_VolumeDown) return "VolumeDown"
-    if (key === Qt.Key_VolumeUp) return "VolumeUp"
-    if (key === Qt.Key_MediaPlay) return "MediaPlay"
-    if (key === Qt.Key_MediaPause) return "MediaPause"
-    if (key === Qt.Key_MediaStop) return "MediaStop"
-    if (key === Qt.Key_MediaPrevious) return "MediaPrevious"
-    if (key === Qt.Key_MediaNext) return "MediaNext"
-    if (key === Qt.Key_MonBrightnessDown) return "MonBrightnessDown"
-    if (key === Qt.Key_MonBrightnessUp) return "MonBrightnessUp"
-    if (key === Qt.Key_KeyboardBrightnessDown) return "KbdBrightnessDown"
-    if (key === Qt.Key_KeyboardBrightnessUp) return "KbdBrightnessUp"
-    if (event.text && String(event.text).trim() !== "") return String(event.text).toUpperCase()
-    return "Key 0x" + key.toString(16).toUpperCase()
-  }
-
-  function recordShortcut(event) {
-    if (!root.capturingShortcut) return
-    if (!root.recordingSnapshotReady) root.snapshotShortcutRecording()
-    if (event.key === Qt.Key_Escape && event.modifiers === Qt.NoModifier) {
-      root.cancelShortcutRecording()
-      event.accepted = true
-      return
-    }
-    if (isModifierKey(event.key)) {
-      root.recordingChord = mergedChordParts(root.recordingChord, event)
-      root.shortcutError = "Release the keys to record this native modifier shortcut."
-      event.accepted = true
-      return
-    }
-
-    var parts = mergedChordParts(root.recordingChord, event)
-    var nativeOption = Model.nativeXkbOptionForChord(parts)
-    if (nativeOption) {
-      chooseNativeShortcut(nativeOption)
-      event.accepted = true
-      return
-    }
-    var modifiers = parts.filter(function(part) {
-      return ["SUPER", "CTRL", "ALT", "SHIFT"].indexOf(part) !== -1
-    })
-
-    var shortcut = {
-      modifiers: modifiers,
-      key: keyName(event),
-      code: Number(event.nativeScanCode || 0)
-    }
-    var error = root.service && typeof root.service.validateShortcut === "function"
-      ? String(root.service.validateShortcut(shortcut) || "") : ""
-    if (error) {
-      root.shortcutError = error
-    } else {
-      chooseRecordedShortcut(shortcut)
-      root.shortcutError = ""
-      root.capturingShortcut = false
-    }
-    event.accepted = true
-  }
-
   function validateDraft() {
     var layouts = root.draftLayouts
     var maximumLayouts = root.service && Number(root.service.maximumLayouts) > 0
       ? Number(root.service.maximumLayouts) : 16
     if (layouts.length > maximumLayouts)
       return "qwitch supports at most " + maximumLayouts + " layouts."
-    if (layouts.length === 0 && root.draft.shortcut)
-      return "Add a layout before assigning a shortcut."
     var seen = ({})
     for (var i = 0; i < layouts.length; i++) {
       var entry = normalizedLayout(layouts[i])
@@ -665,10 +426,6 @@ Panel {
       var key = layoutKey(entry)
       if (seen[key]) return "Each layout and variant combination must be unique."
       seen[key] = true
-    }
-    if (root.draft.shortcut && root.service && typeof root.service.validateShortcut === "function") {
-      var shortcutValidation = String(root.service.validateShortcut(root.draft.shortcut) || "")
-      if (shortcutValidation) return shortcutValidation
     }
     return ""
   }
@@ -693,13 +450,11 @@ Panel {
       layouts: layouts,
       displayMode: String(root.draft.displayMode || "both"),
       osdEnabled: root.draft.osdEnabled === true,
-      shortcut: clone(root.draft.shortcut, null),
       layoutScope: String(root.draft.layoutScope || "global"),
       applicationLayouts: Model.sanitizeApplicationLayouts(
         root.draft.applicationLayouts, layouts),
       deviceOverrides: clone(objectFrom(root.draft.deviceOverrides), ({})),
-      adoptedExistingConfig: true,
-      nativeXkbOption: root.draft.shortcut ? "" : String(root.draft.nativeXkbOption || "")
+      adoptedExistingConfig: true
     }
 
     root.hostWidget.persistSettings(candidate)
@@ -1307,103 +1062,22 @@ Panel {
 
           Text {
             width: parent.width
-            text: "Layout shortcut"
-            color: Qt.darker(root.contentForeground, 1.25)
+            text: root.service && String(root.service.nativeShortcutLabel || "") !== ""
+              ? String(root.service.nativeShortcutLabel) : "Not configured"
+            color: root.contentForeground
             font.family: root.contentFontFamily
-            font.pixelSize: Style.font.bodySmall
+            font.pixelSize: Style.font.subtitle
             font.bold: true
           }
 
           Text {
             width: parent.width
-            text: "Record a key combination. Supported modifier-only chords use native XKB automatically."
+            text: root.service && String(root.service.nativeShortcutLabel || "") !== ""
+              ? "Configured in ~/.config/hypr/input.lua"
+              : "Configure it in ~/.config/hypr/input.lua"
             color: Qt.darker(root.contentForeground, 1.35)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
-          Item {
-            width: parent.width
-            height: Style.spacing.controlHeight
-
-            TextField {
-              id: shortcutField
-              anchors.left: parent.left
-              anchors.right: recordShortcutButton.left
-              anchors.rightMargin: Style.space(6)
-              anchors.verticalCenter: parent.verticalCenter
-              height: parent.height
-              readOnly: true
-              text: root.capturingShortcut
-                ? "Press a key combination…" : root.displayedShortcut()
-              foreground: root.contentForeground
-              accent: root.contentAccent
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.subtitle
-              Keys.priority: Keys.BeforeItem
-              Keys.onPressed: function(event) { root.recordShortcut(event) }
-              Keys.onReleased: function(event) { root.finishModifierShortcut(event) }
-            }
-
-            Button {
-              id: recordShortcutButton
-              text: root.capturingShortcut ? "Cancel" : "Record"
-              bordered: true
-              focusable: true
-              foreground: root.contentForeground
-              accent: root.contentAccent
-              fontFamily: root.contentFontFamily
-              fontSize: Style.font.subtitle
-              height: parent.height
-              anchors.right: clearShortcutButton.left
-              anchors.rightMargin: Style.space(6)
-              anchors.verticalCenter: parent.verticalCenter
-              onClicked: {
-                if (root.capturingShortcut) root.cancelShortcutRecording()
-                else root.beginShortcutRecording()
-              }
-            }
-
-            PanelActionButton {
-              id: clearShortcutButton
-              iconText: "󰅙"
-              tooltipText: "Clear shortcut"
-              foreground: root.contentForeground
-              hoverColor: root.contentUrgent
-              fontFamily: root.contentFontFamily
-              focusable: true
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              enabled: (root.draft.shortcut !== null && root.draft.shortcut !== undefined)
-                || String(root.draft.nativeXkbOption || "") !== ""
-              onClicked: {
-                root.capturingShortcut = false
-                root.shortcutError = ""
-                root.chooseNativeShortcut("")
-              }
-            }
-          }
-
-          Text {
-            visible: root.shortcutError !== ""
-            width: parent.width
-            text: root.shortcutError
-            color: root.contentUrgent
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
-          Text {
-            visible: root.service && root.service.shortcutConflict
-              && String(root.service.shortcutConflict) !== ""
-            width: parent.width
-            text: root.service ? String(root.service.shortcutConflict || "") : ""
-            color: root.contentUrgent
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
           }
 
           PanelSeparator { foreground: root.contentForeground }

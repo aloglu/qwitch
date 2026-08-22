@@ -21,14 +21,6 @@ if [[ \${1:-} == -j && \${2:-} == devices ]]; then
   /usr/bin/cat "$FAKE_DEVICES"
   exit 0
 fi
-if [[ \${1:-} == -j && \${2:-} == getoption && \${3:-} == input:kb_options ]]; then
-  printf '{"str":%s}\n' "$(/usr/bin/jq -Rn --arg value "\${FAKE_KB_OPTIONS:-}" '$value')"
-  exit 0
-fi
-if [[ \${1:-} == eval && \${FAKE_UNBIND_FAIL:-0} == 1 && $* == *handle:unbind* ]]; then
-  printf 'simulated unbind failure\\n' >&2
-  exit 1
-fi
 if [[ \${1:-} == eval && \${FAKE_EVAL_FAIL:-0} == 1 ]]; then exit 1; fi
 exit 0
 `)
@@ -45,8 +37,7 @@ exit 0
     qwitch_test_disable_guardian: "1",
     HYPRLAND_INSTANCE_SIGNATURE: "fake-hypr",
     FAKE_LOG: log,
-    FAKE_DEVICES: devices,
-    FAKE_KB_OPTIONS: ""
+    FAKE_DEVICES: devices
   }
   return { root, log, devices, proc, env }
 }
@@ -65,7 +56,7 @@ function identity(overrides = {}) {
 
 function lease(overrides = {}) {
   return {
-    schema: 1,
+    schema: 2,
     leaseId: "lease-200",
     token: "qwitch-200-test",
     generation: 200,
@@ -73,7 +64,6 @@ function lease(overrides = {}) {
     status: "active",
     phase: "active",
     heartbeat: 0,
-    bindingOwned: false,
     devices: [{
       fingerprint: "v1:31e3:1312:serial:abc123",
       name: "wooting-wooting-80he",
@@ -129,7 +119,7 @@ test("failed mutation retains the conservative pre-state", () => {
   const post = lease({ phase: "layout-active" })
   const result = arm(ctx, pre, post, { FAKE_EVAL_FAIL: "1" })
   assert.equal(result.status, 1)
-  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease.json")))
+  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease-v2.json")))
   assert.equal(saved.phase, "layout-switching")
 })
 
@@ -146,7 +136,7 @@ test("cleanup restores exact device layout and owned active index", () => {
   const log = fs.readFileSync(ctx.log, "utf8")
   assert.match(log, /hl\.device\(\{ name = "wooting-wooting-80he", kb_layout = "us"/)
   assert.match(log, /--batch switchxkblayout wooting-wooting-80he 0/)
-  assert.equal(fs.existsSync(path.join(ctx.root, "qwitch", "lease.json")), false)
+  assert.equal(fs.existsSync(path.join(ctx.root, "qwitch", "lease-v2.json")), false)
 })
 
 test("cleanup leaves an externally changed device and index untouched", () => {
@@ -173,7 +163,7 @@ test("same-name replacement is retained as a tombstone and never touched", () =>
   assert.equal(arm(ctx, lease()).status, 0)
   const cleaned = run(ctx, ["cleanup-now", "lease-200"])
   assert.equal(cleaned.status, 10)
-  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease.json")))
+  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease-v2.json")))
   assert.equal(saved.phase, "collision-wait")
   const cleanupLog = fs.readFileSync(ctx.log, "utf8").split("\n").slice(1).join("\n")
   assert.doesNotMatch(cleanupLog, /hl\.device/)
@@ -189,72 +179,6 @@ test("absent device gets targeted layout restoration without an index switch", (
   assert.doesNotMatch(log, /--batch/)
 })
 
-test("binding cleanup is guarded by the exact lease token", () => {
-  const ctx = setup()
-  const state = lease({ devices: [], bindingOwned: true })
-  assert.equal(arm(ctx, state).status, 0)
-  assert.equal(run(ctx, ["cleanup-now", state.leaseId]).status, 0)
-  const log = fs.readFileSync(ctx.log, "utf8")
-  assert.match(log, /__qwitch_owned_binding/)
-  assert.match(log, /binding\.token == "qwitch-200-test"/)
-  assert.match(log, /handle:unbind/)
-})
-
-test("cleanup restores qwitch-owned XKB options without editing config files", () => {
-  const ctx = setup()
-  const state = lease({
-    devices: [],
-    kbOptions: {
-      baseline: "compose:caps,grp:alt_shift_toggle",
-      owned: ["compose:caps,grp:ctrl_alt_toggle"]
-    }
-  })
-  assert.equal(arm(ctx, state).status, 0)
-  const cleaned = run(ctx, ["cleanup-now", state.leaseId], {
-    FAKE_KB_OPTIONS: state.kbOptions.owned[0]
-  })
-  assert.equal(cleaned.status, 0, cleaned.stderr)
-  const log = fs.readFileSync(ctx.log, "utf8")
-  assert.match(log, /kb_options = "compose:caps,grp:alt_shift_toggle"/)
-})
-
-test("cleanup leaves externally changed XKB options untouched", () => {
-  const ctx = setup()
-  const state = lease({
-    devices: [],
-    kbOptions: {
-      baseline: "compose:caps,grp:alt_shift_toggle",
-      owned: ["compose:caps,grp:ctrl_alt_toggle"]
-    }
-  })
-  assert.equal(arm(ctx, state).status, 0)
-  assert.equal(run(ctx, ["cleanup-now", state.leaseId], {
-    FAKE_KB_OPTIONS: "compose:ralt,grp:win_space_toggle"
-  }).status, 0)
-  const cleanupLog = fs.readFileSync(ctx.log, "utf8").split("\n").slice(1).join("\n")
-  assert.doesNotMatch(cleanupLog, /hl\.config.*kb_options/)
-})
-
-test("cleanup recognizes either qwitch-owned value during an XKB transition", () => {
-  const ctx = setup()
-  const state = lease({
-    devices: [],
-    kbOptions: {
-      baseline: "compose:caps,grp:alt_shift_toggle",
-      owned: [
-        "compose:caps,grp:ctrl_alt_toggle",
-        "compose:caps,grp:ctrl_shift_toggle"
-      ]
-    }
-  })
-  assert.equal(arm(ctx, state).status, 0)
-  const cleaned = run(ctx, ["cleanup-now", state.leaseId], {
-    FAKE_KB_OPTIONS: state.kbOptions.owned[1]
-  })
-  assert.equal(cleaned.status, 0, cleaned.stderr)
-  const log = fs.readFileSync(ctx.log, "utf8")
-  assert.match(log, /kb_options = "compose:caps,grp:alt_shift_toggle"/)
-})
 
 test("successor drain retires the old lease before it can claim", () => {
   const ctx = setup()
@@ -262,20 +186,20 @@ test("successor drain retires the old lease before it can claim", () => {
   assert.equal(arm(ctx, state).status, 0)
   const drain = run(ctx, ["drain", "lease-300", "qwitch-300-next", "300"])
   assert.equal(drain.status, 76)
-  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease.json")))
+  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease-v2.json")))
   assert.equal(saved.status, "retiring")
   assert.equal(saved.phase, "successor-drain")
 })
 
 test("retiring leases cannot be resurrected by the old service", () => {
   const ctx = setup()
-  const state = lease({ devices: [], bindingOwned: true })
+  const state = lease()
   assert.equal(arm(ctx, state).status, 0)
   assert.equal(run(ctx, ["retire", state.leaseId, state.token, "200"]).status, 0)
   const before = fs.readFileSync(ctx.log, "utf8")
   assert.equal(arm(ctx, state).status, 75)
   assert.equal(fs.readFileSync(ctx.log, "utf8"), before)
-  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease.json")))
+  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease-v2.json")))
   assert.equal(saved.status, "retiring")
 })
 
@@ -284,7 +208,7 @@ test("mutation command and both payload identities must match exactly", () => {
   const pre = lease()
   const wrongToken = lease({ token: "qwitch-200-other" })
   assert.equal(arm(ctx, pre, wrongToken).status, 78)
-  assert.equal(fs.existsSync(path.join(ctx.root, "qwitch", "lease.json")), false)
+  assert.equal(fs.existsSync(path.join(ctx.root, "qwitch", "lease-v2.json")), false)
 
   const wrongInstance = lease({ hyprInstance: "other-hypr" })
   assert.equal(arm(ctx, pre, wrongInstance).status, 78)
@@ -299,7 +223,7 @@ test("a new compositor instance discards the inaccessible old lease", () => {
   })
   assert.equal(drained.status, 0, drained.stderr)
   assert.equal(drained.stdout.trim(), "ready")
-  assert.equal(fs.existsSync(path.join(ctx.root, "qwitch", "lease.json")), false)
+  assert.equal(fs.existsSync(path.join(ctx.root, "qwitch", "lease-v2.json")), false)
 })
 
 test("Hyprland command timeout retains the conservative pre-state", () => {
@@ -313,25 +237,25 @@ test("Hyprland command timeout retains the conservative pre-state", () => {
   })
   assert.equal(result.status, 1)
   assert.ok(Date.now() - started < 1800, "hyprctl timeout was not bounded")
-  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease.json")))
+  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease-v2.json")))
   assert.equal(saved.phase, "layout-switching")
 })
 
 test("heartbeat is exact and increments only the active lease", () => {
   const ctx = setup()
-  const state = lease({ devices: [], bindingOwned: true })
+  const state = lease()
   assert.equal(arm(ctx, state).status, 0)
   assert.equal(run(ctx, ["heartbeat", state.leaseId, state.token, "200"]).status, 0)
-  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease.json")))
+  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease-v2.json")))
   assert.equal(saved.heartbeat, 1)
   assert.equal(run(ctx, ["heartbeat", "wrong", state.token, "200"]).status, 75)
 })
 
 test("stored leases require an exact service process identity", () => {
   const ctx = setup()
-  const state = lease({ devices: [], bindingOwned: true })
+  const state = lease()
   assert.equal(arm(ctx, state).status, 0)
-  const leasePath = path.join(ctx.root, "qwitch", "lease.json")
+  const leasePath = path.join(ctx.root, "qwitch", "lease-v2.json")
   const saved = JSON.parse(fs.readFileSync(leasePath))
   assert.equal(typeof saved.shellPid, "number")
   assert.match(saved.shellStart, /^[1-9][0-9]*$/)
@@ -340,27 +264,16 @@ test("stored leases require an exact service process identity", () => {
   assert.equal(run(ctx, ["heartbeat", state.leaseId, state.token, "200"]).status, 78)
 })
 
-test("failed shortcut unbind retains exact ownership for retry", () => {
-  const ctx = setup()
-  const state = lease({ devices: [], bindingOwned: true })
-  assert.equal(arm(ctx, state).status, 0)
-  const cleaned = run(ctx, ["cleanup-now", state.leaseId], { FAKE_UNBIND_FAIL: "1" })
-  assert.equal(cleaned.status, 1)
-  const saved = JSON.parse(fs.readFileSync(path.join(ctx.root, "qwitch", "lease.json")))
-  assert.equal(saved.bindingOwned, true)
-  assert.equal(saved.status, "retiring")
-  assert.match(fs.readFileSync(ctx.log, "utf8"), /not ok or result == false/)
-})
 
 test("exact abandonment drops only the lease and never calls Hyprland", () => {
   const ctx = setup()
-  const state = lease({ devices: [], bindingOwned: true })
+  const state = lease()
   assert.equal(arm(ctx, state).status, 0)
   const before = fs.readFileSync(ctx.log, "utf8")
   assert.equal(run(ctx, ["abandon", state.leaseId, state.token, "200", "wrong"]).status, 75)
   assert.equal(run(ctx, ["abandon", state.leaseId, state.token, "200", "fake-hypr"]).status, 0)
   assert.equal(fs.readFileSync(ctx.log, "utf8"), before)
-  assert.equal(fs.existsSync(path.join(ctx.root, "qwitch", "lease.json")), false)
+  assert.equal(fs.existsSync(path.join(ctx.root, "qwitch", "lease-v2.json")), false)
 })
 
 test("resident guardian retires safely after checkout deletion and can be re-armed", () => {
@@ -380,7 +293,7 @@ test("resident guardian retires safely after checkout deletion and can be re-arm
   assert.equal(bootstrap.status, 0, bootstrap.stderr)
   ctx.executable = bootstrap.stdout.trim()
 
-  const state = lease({ devices: [], bindingOwned: true })
+  const state = lease({ devices: [] })
   assert.equal(arm(ctx, state, state, guardianEnv).status, 0)
   const stateDir = path.join(ctx.root, "qwitch")
   const ackPath = path.join(stateDir, `watchdog.${state.leaseId}.ack`)
@@ -390,9 +303,9 @@ test("resident guardian retires safely after checkout deletion and can be re-arm
 
   fs.unlinkSync(source)
   assert.equal(run(ctx, ["retire", state.leaseId, state.token, "200"], guardianEnv).status, 0)
-  assert.equal(waitFor(() => !fs.existsSync(path.join(stateDir, "lease.json"))
+  assert.equal(waitFor(() => !fs.existsSync(path.join(stateDir, "lease-v2.json"))
     && !fs.existsSync(ackPath)), true)
-  assert.match(fs.readFileSync(ctx.log, "utf8"), /handle:unbind/)
+  assert.doesNotMatch(fs.readFileSync(ctx.log, "utf8"), /handle:unbind|kb_options/)
 
   assert.equal(arm(ctx, state, state, guardianEnv).status, 0)
   const secondAck = fs.readFileSync(ackPath, "utf8").trim().split(/\s+/)
@@ -404,7 +317,7 @@ test("resident guardian retires safely after checkout deletion and can be re-arm
 test("bootstrap replaces a stale resident helper with the bundled version", () => {
   const ctx = setup()
   const stateDir = path.join(ctx.root, "qwitch")
-  const resident = path.join(stateDir, "qwitch-runtime-v1")
+  const resident = path.join(stateDir, "qwitch-runtime-v2")
   fs.mkdirSync(stateDir, { mode: 0o700 })
   fs.writeFileSync(resident, "#!/usr/bin/env bash\nexit 99\n", { mode: 0o700 })
 
@@ -418,7 +331,7 @@ test("bootstrap replaces a stale resident helper with the bundled version", () =
 test("corrupt lease and symlinked runtime directory fail closed", () => {
   const ctx = setup()
   fs.mkdirSync(path.join(ctx.root, "qwitch"), { mode: 0o700 })
-  fs.writeFileSync(path.join(ctx.root, "qwitch", "lease.json"), "not-json\n", { mode: 0o600 })
+  fs.writeFileSync(path.join(ctx.root, "qwitch", "lease-v2.json"), "not-json\n", { mode: 0o600 })
   assert.equal(arm(ctx, lease()).status, 78)
   assert.equal(fs.readFileSync(ctx.log, "utf8"), "")
 

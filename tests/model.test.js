@@ -187,6 +187,7 @@ test('sanitizes settings without inventing a default layout', () => {
     displayMode: 'icons-and-confetti',
     osdEnabled: 'true',
     shortcut: { modifiers: ['SUPER'], key: 'K', code: 37 },
+    nativeXkbOption: 'grp:alt_shift_toggle',
     deviceOverrides: JSON.parse('{"good":"manage","ignored":"ignore","bad":"maybe","__proto__":"manage"}'),
   };
 
@@ -194,7 +195,8 @@ test('sanitizes settings without inventing a default layout', () => {
   assert.equal(clean.layouts.length, 1);
   assert.equal(clean.displayMode, 'both');
   assert.equal(clean.osdEnabled, false);
-  assert.deepEqual(clean.shortcut, { modifiers: ['SUPER'], key: 'K', code: 37 });
+  assert.equal(Object.hasOwn(clean, 'shortcut'), false);
+  assert.equal(Object.hasOwn(clean, 'nativeXkbOption'), false);
   assert.deepEqual(clean.deviceOverrides, { good: 'manage', ignored: 'ignore' });
 
   const first = Model.defaultSettings();
@@ -267,37 +269,17 @@ test('reads native Hyprland XKB options and labels common group toggles', () => 
   assert.equal(Model.nativeXkbShortcutLabel('grp:alt_shift_toggle'), 'Alt + Shift');
   assert.equal(Model.nativeXkbShortcutLabel('grp:win_space_toggle'), 'Super + Space');
   assert.equal(Model.nativeXkbShortcutLabel('grp:ctrl_alt_toggle'), 'Ctrl + Alt');
-  assert.equal(Model.withoutGroupToggle('compose:caps,grp:alt_shift_toggle,shift:both_capslock_cancel'),
-    'compose:caps,shift:both_capslock_cancel');
-  assert.equal(Model.withGroupToggle('compose:caps,grp:alt_shift_toggle', 'grp:ctrl_alt_toggle'),
-    'compose:caps,grp:ctrl_alt_toggle');
   assert.equal(Model.firstGroupToggle('caps:escape'), '');
+  assert.equal(Model.firstGroupToggle('caps:escape,grp:unknown_toggle,grp:ctrl_shift_toggle'),
+    'grp:ctrl_shift_toggle');
+  assert.equal(Model.nativeXkbShortcutLabel('grp:unknown_toggle'), '');
 
   const adopted = Model.sanitizeSettings({
     adoptedExistingConfig: true,
     nativeXkbOption: 'grp:ctrl_shift_toggle',
   });
   assert.equal(adopted.adoptedExistingConfig, true);
-  assert.equal(adopted.nativeXkbOption, 'grp:ctrl_shift_toggle');
-  assert.equal(Model.sanitizeSettings({ nativeXkbOption: 'compose:ralt' }).nativeXkbOption, '');
-  assert.equal(Model.sanitizeSettings({ nativeXkbOption: 'grp:ctrl_alt_shift_toggle' }).nativeXkbOption, '');
-  assert.equal(Model.nativeXkbOptionForChord(['SHIFT', 'ALT']), 'grp:alt_shift_toggle');
-  assert.equal(Model.nativeXkbOptionForChord(['CTRL', 'SHIFT']), 'grp:ctrl_shift_toggle');
-  assert.equal(Model.nativeXkbOptionForChord(['ALT', 'CTRL']), 'grp:ctrl_alt_toggle');
-  assert.equal(Model.nativeXkbOptionForChord(['SUPER', 'SPACE']), 'grp:win_space_toggle');
-  assert.equal(Model.nativeXkbOptionForChord(['CTRL', 'ALT', 'SHIFT']), '');
-  assert.equal(Model.withGroupToggle(
-    'compose:caps,ctrl:nocaps,shift:both_capslock_cancel,grp:alt_shift_toggle',
-    'grp:ctrl_shift_toggle'
-  ), 'compose:caps,ctrl:nocaps,grp:ctrl_shift_toggle');
-  assert.equal(Model.withGroupToggle(
-    'compose:caps,nbsp:level2,grp:ctrl_shift_toggle',
-    'grp:win_space_toggle'
-  ), 'compose:caps,grp:win_space_toggle');
-  assert.equal(Model.sanitizeSettings({
-    shortcut: { modifiers: ['SUPER'], key: 'K', code: 37 },
-    nativeXkbOption: 'grp:alt_shift_toggle',
-  }).nativeXkbOption, '');
+  assert.equal(Object.hasOwn(adopted, 'nativeXkbOption'), false);
 });
 
 test('formats text, flags and fallbacks without leaving an empty widget', () => {
@@ -318,65 +300,6 @@ test('quotes arbitrary strings as a single Lua string literal', () => {
   assert.equal(Model.luaQuote('İstanbul 🇹🇷'), '"İstanbul 🇹🇷"');
 });
 
-test('normalizes and validates physical shortcuts conservatively', () => {
-  assert.deepEqual(Model.normalizeShortcut({
-    modifiers: ['control', 'Super', 'CTRL'], readableKey: 'K', nativeScanCode: 37,
-  }), { modifiers: ['SUPER', 'CTRL'], key: 'K', code: 37 });
-  assert.deepEqual(Model.normalizeShortcut({ modmask: 68, key: 'code:10', keycode: 0 }), {
-    modifiers: ['SUPER', 'CTRL'], key: 'Key 10', code: 10,
-  });
-
-  assert.equal(Model.validateShortcut({ modifiers: ['SUPER'], key: 'K', code: 37 }), '');
-  assert.equal(Model.validateShortcut({ modifiers: [], key: 'F12', code: 88 }), '');
-  assert.match(Model.validateShortcut({ modifiers: [], key: 'A', code: 30 }), /modifier/i);
-  assert.match(Model.validateShortcut({ modifiers: ['CTRL'], key: 'Shift_L', code: 42 }), /modifier-only/i);
-  assert.match(Model.validateShortcut({ modifiers: ['Hyper'], key: 'K', code: 37 }), /unknown modifier/i);
-  assert.match(Model.validateShortcut({ modifiers: ['SUPER'], key: 'K' }), /physical keycode/i);
-});
-
-test('parses text-mode Hyprland binds and detects physical and symbolic conflicts', () => {
-  const text = `bind
-  modmask: 68
-  submap:
-  key: SUPER + CTRL + code:10
-  keycode: 0
-  catch_all: false
-  description: Existing physical shortcut
-  dispatcher: exec
-  arg: notify-send "contains: colon"
-
-bindr
-  modmask: 64
-  submap: resize
-  key: K
-  keycode: 0
-  description: Existing symbolic shortcut
-  dispatcher: resizeactive
-  arg: 10 0
-`;
-  const binds = Model.parseHyprctlBindsText(text);
-
-  assert.deepEqual(binds, [
-    {
-      type: 'bind', modmask: 68, submap: '', key: 'SUPER + CTRL + code:10', keycode: 0,
-      description: 'Existing physical shortcut', dispatcher: 'exec', arg: 'notify-send "contains: colon"',
-    },
-    {
-      type: 'bindr', modmask: 64, submap: 'resize', key: 'K', keycode: 0,
-      description: 'Existing symbolic shortcut', dispatcher: 'resizeactive', arg: '10 0',
-    },
-  ]);
-  assert.equal(Model.shortcutsConflict({ modifiers: ['CTRL', 'SUPER'], key: '1', code: 10 }, binds[0]), true);
-  assert.equal(Model.shortcutsConflict({ modifiers: ['SUPER'], key: 'K', code: 37 }, binds[1]), true);
-  assert.equal(Model.shortcutsConflict({ modifiers: ['SUPER'], key: 'Enter', code: 36 }, {
-    modmask: 64, key: 'RETURN', description: 'Terminal',
-  }), true);
-  assert.equal(Model.shortcutsConflict({ modifiers: [], key: 'VolumeUp', code: 123 }, {
-    modmask: 0, key: 'XF86AudioRaiseVolume', description: 'Volume up',
-  }), true);
-  assert.equal(Model.shortcutsConflict({ modifiers: ['SUPER'], key: 'J', code: 36 }, binds[1]), false);
-  assert.equal(Model.shortcutsConflict({ modifiers: ['SUPER', 'CTRL'], key: '1', code: 11 }, binds[0]), false);
-});
 test('parses real-style kernel input records', () => {
   const devices = Model.parseProcInputDevices(PROC_INPUT_FIXTURE);
   assert.equal(devices.length, 7);

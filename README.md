@@ -2,14 +2,14 @@
 
 qwitch is a minimal keyboard-layout switcher for the Omarchy 4.0 bar. It uses
 Omarchy's native Quickshell controls, follows the active theme, and keeps all
-layout and shortcut changes in the running Hyprland session.
+layout changes in the running Hyprland session.
 
 ## Features
 
 - Add, edit, remove, and order XKB layouts from the bar panel; valid changes
   save automatically through Omarchy's shell configuration API.
-- Switch every safely managed typing keyboard from the panel or one
-  authoritative layout shortcut.
+- Switch every safely managed typing keyboard from the panel or the native XKB
+  group-toggle shortcut configured in Hyprland.
 - Optionally remember layouts per application or per live window, while
   keeping one global layout as the default behavior.
 - Show a label, Unicode flag, or both in the bar.
@@ -20,28 +20,27 @@ layout and shortcut changes in the running Hyprland session.
   nodes, pointers, and ambiguous devices unmanaged by default.
 
 On first enable, qwitch adopts a coherent layout list already active in
-Hyprland and adopts any native `grp:*_toggle` XKB shortcut it finds. The
-settings panel then presents one layout-shortcut setting: choose a native XKB
-modifier shortcut, or record a custom shortcut containing a regular key.
-Choosing one replaces the other at runtime.
+Hyprland. It also reads the effective native `grp:*_toggle` XKB option and shows
+the corresponding shortcut in settings.
 
-qwitch does not edit `~/.config/hypr` or install a persistent Hyprland
-keybinding. It applies shortcut changes through Hyprland's native runtime API,
-stores the choice in Omarchy's shell configuration, and reapplies it when the
-plugin starts. Unrelated XKB options such as Compose and Caps Lock behavior are
-preserved. On unload, qwitch restores the original live XKB options only if
-they still match the values qwitch applied; an external change is left alone.
-While running, qwitch also removes Omarchy's simpler
+qwitch does not edit `~/.config/hypr`, install a Hyprland keybinding, or change
+`kb_options` at runtime. Configure the layouts and native switching shortcut in
+`~/.config/hypr/input.lua`; qwitch only observes the effective value reported
+by Hyprland. For example:
+
+```lua
+return {
+  input = {
+    kb_layout = "us,tr",
+    kb_options = "grp:alt_shift_toggle",
+  },
+}
+```
+
+After editing the file, reload Hyprland normally. The settings panel will show
+the detected shortcut, or `Not configured` when no supported native group
+toggle is active. While running, qwitch also removes Omarchy's simpler
 `omarchy.keyboard-layout` widget through the shell's native configuration API.
-
-XKB supports a defined set of modifier-only group toggles. The recorder resolves
-recognized native chords, such as Alt+Shift, through qwitch's XKB catalog
-automatically. While a native chord is active, qwitch suspends other live XKB
-options that remap keys participating in that chord; this keeps the chord
-order-independent. Those options are restored when the shortcut is cleared or
-qwitch unloads. Custom Hyprland shortcuts contain a non-modifier key;
-unsupported modifier-only combinations receive a general explanation instead
-of being silently ignored.
 
 Layout scope is global by default. **Remember by app** uses Quickshell's native
 active-toplevel information to associate an application ID with a persisted
@@ -125,17 +124,17 @@ qwitch uses tools already present in Omarchy 4.0:
   session-only cleanup lease and serialize qwitch-owned runtime changes;
 - `/proc/bus/input/devices` and `hyprctl devices` to distinguish typing
   keyboards from keyboard-like HID interfaces;
-- the Hyprland Lua runtime to apply per-device layout lists, own one optional
-  shortcut handle, and replace only the live XKB group-toggle option;
-- `omarchy-shell` IPC for shortcut dispatch and Omarchy's OSD.
+- the Hyprland Lua runtime to apply per-device layout lists;
+- `hyprctl getoption` to observe the effective native XKB group toggle;
+- `omarchy-shell` IPC for layout switching and Omarchy's OSD.
 
 qwitch needs no root privileges and makes no network requests. Its temporary
 runtime state lives under `$XDG_RUNTIME_DIR/qwitch/`, alongside the lock at
 `$XDG_RUNTIME_DIR/qwitch-runtime.lock`. A small resident helper and one sleeping
 watchdog survive normal plugin unload long enough to restore only qwitch-owned
-device layouts and its exact shortcut handle; all of this state disappears with
-the user session. Once a cleanup lease settles, its watchdog exits; the private
-resident helper and lock may remain available until that user session ends.
+device layouts; all of this state disappears with the user session. Once a
+cleanup lease settles, its watchdog exits; the private resident helper and lock
+may remain available until that user session ends.
 
 Changing settings writes only the qwitch fields in Omarchy's normal
 `~/.config/omarchy/shell.json` bar entry. Runtime device layouts are restored on
@@ -165,7 +164,7 @@ tests/run-qml-tests.sh
 ```
 
 The QML harness checks field sizing and focus behavior, native button-group
-signals, automatic saving, shortcut-source labeling, and viewport reset. It
+signals, automatic saving, and viewport reset. It
 copies the panel and Omarchy UI modules into a temporary test configuration; it
 does not install or alter the plugin.
 

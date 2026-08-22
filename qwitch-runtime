@@ -7,8 +7,8 @@ umask 077
 runtime_root=${XDG_RUNTIME_DIR:?qwitch requires XDG_RUNTIME_DIR}
 state_dir="$runtime_root/qwitch"
 lock_file="$runtime_root/qwitch-runtime.lock"
-lease_file="$state_dir/lease.json"
-resident_path="$state_dir/qwitch-runtime-v1"
+lease_file="$state_dir/lease-v2.json"
+resident_path="$state_dir/qwitch-runtime-v2"
 hyprctl_bin=${qwitch_hyprctl:-/usr/bin/hyprctl}
 jq_bin=${qwitch_jq:-/usr/bin/jq}
 proc_input=${qwitch_proc_input:-/proc/bus/input/devices}
@@ -76,7 +76,7 @@ validate_state() {
     def spec: text(512) and test("^[A-Za-z0-9_+,.()\\-]*$");
     def index: type == "number" and . == floor and . >= 0 and . <= 63;
     type == "object"
-    and .schema == 1
+    and .schema == 2
     and (.leaseId | text(128) and test("^[A-Za-z0-9._-]+$"))
     and (.token | text(160) and test("^qwitch-[A-Za-z0-9._-]+$"))
     and (.generation | type == "number" and . == floor and . >= 1 and . <= 9007199254740991)
@@ -90,12 +90,6 @@ validate_state() {
     else
       (has("shellPid") | not) and (has("shellStart") | not)
     end)
-    and (.bindingOwned | type == "boolean")
-    and ((.kbOptions? // null) == null or
-      ((.kbOptions | type == "object")
-      and (.kbOptions.baseline | text(2048))
-      and (.kbOptions.owned | type == "array" and length >= 1 and length <= 4
-        and all(.[]; text(2048)))))
     and (.devices | type == "array" and length <= 32)
     and all(.devices[];
       type == "object"
@@ -314,7 +308,7 @@ mutation_payloads_match() {
 }
 
 state_has_obligations() {
-  "$jq_bin" -e '.bindingOwned or ((.kbOptions? // null) != null) or (.devices | length > 0)' >/dev/null <<<"$1"
+  "$jq_bin" -e '.devices | length > 0' >/dev/null <<<"$1"
 }
 
 install_resident() {
@@ -609,29 +603,13 @@ cleanup_locked() {
     return 1
   fi
 
-  local token generation token_q binding_owned device_count record name count current
+  local token generation token_q device_count record name count current
   local baseline_layout baseline_variant baseline_index current_layout current_variant current_index
   local owned_layout owned_index layout_q variant_q name_q statements="" batch="" keep='[]'
-  local kb_record kb_baseline kb_current kb_baseline_q kb_statement=""
   token=$("$jq_bin" -r '.token' <<<"$lease")
   generation=$("$jq_bin" -r '.generation' <<<"$lease")
   token_q=$(lua_quote "$token")
-  binding_owned=$("$jq_bin" -r '.bindingOwned' <<<"$lease")
   device_count=$("$jq_bin" -r '.devices | length' <<<"$lease")
-
-  kb_record=$("$jq_bin" -c '.kbOptions? // null' <<<"$lease")
-  if [[ $kb_record != null ]]; then
-    kb_baseline=$("$jq_bin" -r '.baseline' <<<"$kb_record")
-    if ! kb_current=$(run_hyprctl -j getoption input:kb_options 2>/dev/null) \
-        || ! kb_current=$("$jq_bin" -er '.str // ""' <<<"$kb_current"); then
-      return 1
-    fi
-    if "$jq_bin" -e --arg current "$kb_current" 'any(.owned[]; . == $current)' \
-        >/dev/null <<<"$kb_record"; then
-      kb_baseline_q=$(lua_quote "$kb_baseline")
-      kb_statement="hl.config({ input = { kb_options = $kb_baseline_q } }); "
-    fi
-  fi
 
   while IFS= read -r record; do
     [[ -n $record ]] || continue
@@ -685,10 +663,6 @@ cleanup_locked() {
   code="do local generation = $generation; local current = tonumber(rawget(_G, '__qwitch_generation') or 0); "
   code+="if current > generation then error('qwitch_stale') end; "
   code+="local cancelled = tonumber(rawget(_G, '__qwitch_cancelled_generation') or 0); if generation > cancelled then _G.__qwitch_cancelled_generation = generation end; "
-  if [[ $binding_owned == true ]]; then
-    code+="local binding = rawget(_G, '__qwitch_owned_binding'); if type(binding) == 'table' and binding.token == $token_q then local handle = binding.handle; if handle then local ok, result = pcall(function() return handle:unbind() end); if not ok or result == false then error('qwitch_unbind_failed') end end; if rawget(_G, '__qwitch_owned_binding') == binding then _G.__qwitch_owned_binding = nil end end; "
-  fi
-  code+="$kb_statement"
   if ((device_count > 0)); then
     code+="local owner = rawget(_G, '__qwitch_layout_owner'); if not owner or owner.token ~= $token_q then error('qwitch_stale') end; owner.phase = 'watchdog-restoring'; $statements; "
   fi
@@ -711,7 +685,7 @@ cleanup_locked() {
   fi
   if ((keep_count > 0)); then
     lease=$("$jq_bin" -c --argjson keep "$keep" \
-      '.devices = $keep | .bindingOwned = false | .kbOptions = null | .status = "retiring" | .phase = "collision-wait"' \
+      '.devices = $keep | .status = "retiring" | .phase = "collision-wait"' \
       <<<"$lease")
     atomic_write_lease "$lease"
     return 10

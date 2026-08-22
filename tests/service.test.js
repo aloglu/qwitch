@@ -40,7 +40,7 @@ test("runtime mutations use the resident pre/post lease contract", () => {
 test("mutation ownership failures always quiesce the old service", () => {
   assert.match(service, /function mutationSuperseded\(exitCode\)/)
   assert.match(service, /exitCode === 75 \|\| exitCode === 76/)
-  assert.equal((service.match(/root\.mutationSuperseded\(exitCode\)/g) || []).length, 5)
+  assert.equal((service.match(/root\.mutationSuperseded\(exitCode\)/g) || []).length, 4)
 })
 
 test("layout mutations stay within the cleanup lease index schema", () => {
@@ -54,15 +54,7 @@ test("layout mutations stay within the cleanup lease index schema", () => {
 test("restore pre-state covers indexes produced before its batch completes", () => {
   assert.match(service, /var restoreLeaseIndexes = \(\{\}\)/)
   assert.match(service, /restoreLeaseIndexes\[fingerprint\] = \[\s*0,\s*baseline \? baseline\.index[\s\S]*current \? current\.active_layout_index/)
-  assert.match(service, /_pendingRestoreMatches, restoreLeaseIndexes, _mayOwnShortcut/)
-})
-
-test("binding ownership survives a failed exact unbind", () => {
-  assert.match(service, /old\.token ~= " \+ token/)
-  assert.match(service, /return old_handle:unbind\(\)/)
-  assert.match(service, /rawget\(_G, '__qwitch_owned_binding'\) == old then _G\.__qwitch_owned_binding = nil/)
-  assert.match(service, /return handle:unbind\(\)/)
-  assert.equal((service.match(/qwitch_unbind_failed/g) || []).length, 2)
+  assert.match(service, /_pendingRestoreMatches, restoreLeaseIndexes\)/)
 })
 
 test("service drains and freshly observes before runtime readiness", () => {
@@ -78,9 +70,8 @@ test("Hyprland reload abandons the exact old lease before rebasing", () => {
   assert.match(service, /_residentRuntimeHelper, "abandon", _leaseId/)
   assert.match(service, /_reloadAbandonEpoch = _runtimeEpoch/)
   assert.match(service, /_runtimeReadyAfterSerial = root\._deviceRefreshSerial/)
-  assert.match(service, /_postReloadBindSerial = root\._bindRefreshSerial/)
-  assert.match(service, /if \(_rebaseAfterReload \|\| abandonProcess\.running\)/)
-  assert.match(service, /if \(!_runtimeReady \|\| _rebaseAfterReload \|\| abandonProcess\.running\s*\|\| bindingProcess\.running\)/)
+  assert.match(service, /if \(_rebaseAfterReload\) \{/)
+  assert.match(service, /if \(!_runtimeReady \|\| _rebaseAfterReload \|\| abandonProcess\.running\)/)
 })
 
 test("service lease has heartbeat and kernel identity", () => {
@@ -100,14 +91,15 @@ test("destruction retires the exact resident lease", () => {
   assert.doesNotMatch(service, /detachedRuntimeCommand/)
 })
 
-test("first run adopts existing Hyprland layouts and the native group toggle", () => {
+test("first run adopts existing Hyprland layouts and observes the native group toggle", () => {
   assert.match(service, /function maybeAdoptExistingConfig\(\)/)
   assert.match(service, /candidate\.layouts = importingLayouts \? clone\(layouts, \[\]\) : clone\(configuredLayouts, \[\]\)/)
   assert.match(service, /candidate\.adoptedExistingConfig = true/)
-  assert.match(service, /Model\.firstGroupToggle\(Model\.parseHyprOptionString/)
+  assert.match(service, /Model\.firstGroupToggle\(_observedKbOptions\)/)
+  assert.match(service, /Model\.parseHyprOptionString\(root\._nativeOptionOutput\)/)
   assert.match(service, /"input:kb_options"/)
-  assert.match(service, /candidate\.nativeXkbOption = detectedShortcut/)
-  assert.match(service, /detectedNativeXkbOption: Model\.firstGroupToggle/)
+  assert.match(service, /detectedGroupToggle: Model\.firstGroupToggle/)
+  assert.match(service, /nativeShortcutLabel: Model\.nativeXkbShortcutLabel/)
   assert.match(service, /nativeOptionProcess\.running = true/)
   assert.match(service, /shell\.updateEntryInline\("io\.github\.aloglu\.qwitch", candidate\)/)
 })
@@ -168,7 +160,6 @@ test("panel headers and mixed control rows use compact aligned geometry", () => 
   assert.doesNotMatch(panel, /PanelHero\s*\{/)
   assert.match(panel, /id: mainTitle[\s\S]*anchors\.right: settingsButton\.left/)
   assert.match(panel, /id: osdSwitch[\s\S]*trackHeight: Style\.space\(18\)/)
-  assert.match(panel, /id: shortcutField[\s\S]*height: parent\.height/)
   assert.match(panel, /id: moveUpButton[\s\S]*anchors\.verticalCenter: parent\.verticalCenter/)
   assert.match(panel, /Grid\s*\{[\s\S]*readonly property real fieldWidth: \(width - columnSpacing\) \/ 2/)
   assert.equal((panel.match(/width: parent\.fieldWidth/g) || []).length, 4)
@@ -191,18 +182,13 @@ test("README documents plugin updates and stale-shell recovery", () => {
   assert.match(readme, /fast-forward/i)
 })
 
-test("settings reopen at the top and present one authoritative shortcut", () => {
-  assert.match(panel, /function displayedShortcut\(\)/)
-  assert.match(panel, /text: "Layout shortcut"/)
-  assert.doesNotMatch(panel, /nativeShortcutDropdown/)
-  assert.doesNotMatch(panel, /property alias _nativeShortcutSelector/)
-  assert.match(panel, /chooseRecordedShortcut\(shortcut\)/)
-  assert.match(panel, /Model\.nativeXkbOptionForChord\(root\.recordingChord\)/)
-  assert.match(panel, /That modifier-only combination is not available as a native XKB/)
-  assert.match(panel, /function snapshotShortcutRecording\(\)/)
-  assert.match(panel, /function restoreRejectedShortcut\(message\)/)
-  assert.doesNotMatch(panel, /Ctrl \+ Alt \+ Shift/)
-  assert.doesNotMatch(panel, /Both shortcut sources are configured:/)
+test("settings reopen at the top and present the native shortcut read-only", () => {
+  assert.match(panel, /text: "󰌌  SWITCHING SHORTCUT"/)
+  assert.match(panel, /root\.service\.nativeShortcutLabel/)
+  assert.match(panel, /root\.service\.nativeShortcutLabel/)
+  assert.match(panel, /"Configured in ~\/\.config\/hypr\/input\.lua"/)
+  assert.match(panel, /"Configure it in ~\/\.config\/hypr\/input\.lua"/)
+  assert.doesNotMatch(panel, /Record|recordShortcut|capturingShortcut|chooseNativeShortcut|chooseRecordedShortcut/)
   assert.match(panel, /settingsScroll\.contentY = 0/)
   assert.match(panel, /text: "qwitch: Settings"/)
   assert.match(panel, /text: "qwitch: Layouts"/)
@@ -211,15 +197,14 @@ test("settings reopen at the top and present one authoritative shortcut", () => 
   assert.doesNotMatch(panel, /saveStatus/)
 })
 
-test("shortcut ownership replaces only the live XKB group toggle", () => {
-  assert.match(service, /Model\.withoutGroupToggle\(_baselineKbOptions\)/)
-  assert.match(service, /Model\.withGroupToggle\(_baselineKbOptions, settings\.nativeXkbOption\)/)
-  assert.match(service, /hl\.config\(\{ input = \{ kb_options = /)
-  assert.match(service, /kbOptions: kbOptionsValue === undefined/)
-  assert.match(service, /_mayOwnShortcut \|\| _mayOwnKbOptions/)
-  assert.match(runtimeHelper, /\.kbOptions\.baseline/)
-  assert.match(runtimeHelper, /any\(\.owned\[\]; \. == \$current\)/)
-  assert.match(runtimeHelper, /kb_options = \$kb_baseline_q/)
+test("shortcut handling is strictly observational", () => {
+  assert.match(service, /"hyprctl", "-j", "getoption", "input:kb_options"/)
+  assert.match(service, /Model\.parseHyprOptionString/)
+  assert.match(service, /Model\.firstGroupToggle/)
+  assert.doesNotMatch(service, /bindingProcess|bindsProcess|hyprctl", "binds|hl\.bind|handle:unbind/)
+  assert.doesNotMatch(service, /hl\.config\(\{ input = \{ kb_options/)
+  assert.doesNotMatch(runtimeHelper, /bindingOwned|kbOptions|kb_options|handle:unbind/)
+  assert.doesNotMatch(barWidget, /shortcut|nativeXkbOption/)
   assert.match(readme, /does not edit `~\/\.config\/hypr`/)
 })
 

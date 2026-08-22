@@ -40,27 +40,27 @@ BarWidget {
 
   function normalizedSettings(value) {
     var source = value && typeof value === "object" ? value : ({})
-    var out = { id: root.moduleName }
-    for (var key in source) if (key !== "id") out[key] = source[key]
-
-    out.layouts = arrayFrom(out.layouts)
-    if (["text", "flag", "both"].indexOf(String(out.displayMode || "")) === -1)
-      out.displayMode = "both"
-    out.osdEnabled = out.osdEnabled === true
-    if (out.shortcut === undefined) out.shortcut = null
-    var scope = String(out.layoutScope || "")
+    var mode = String(source.displayMode || "")
+    if (["text", "flag", "both"].indexOf(mode) === -1) mode = "both"
+    var scope = String(source.layoutScope || "")
     if (["global", "application", "window"].indexOf(scope) === -1)
-      scope = String(out.applicationMode || "") === "remember" ? "application" : "global"
-    out.layoutScope = scope
-    delete out.applicationMode
-    if (!out.applicationLayouts || typeof out.applicationLayouts !== "object"
-        || typeof out.applicationLayouts.length === "number") out.applicationLayouts = ({})
-    if (!out.deviceOverrides || typeof out.deviceOverrides !== "object"
-        || typeof out.deviceOverrides.length === "number") out.deviceOverrides = ({})
-    out.adoptedExistingConfig = out.adoptedExistingConfig === true
-    out.nativeXkbOption = String(out.nativeXkbOption || "")
-    if (out.shortcut) out.nativeXkbOption = ""
-    return out
+      scope = String(source.applicationMode || "") === "remember" ? "application" : "global"
+    var applications = source.applicationLayouts
+    if (!applications || typeof applications !== "object"
+        || typeof applications.length === "number") applications = ({})
+    var overrides = source.deviceOverrides
+    if (!overrides || typeof overrides !== "object"
+        || typeof overrides.length === "number") overrides = ({})
+    return {
+      id: root.moduleName,
+      layouts: arrayFrom(source.layouts),
+      displayMode: mode,
+      osdEnabled: source.osdEnabled === true,
+      layoutScope: scope,
+      applicationLayouts: applications,
+      deviceOverrides: overrides,
+      adoptedExistingConfig: source.adoptedExistingConfig === true
+    }
   }
 
   function mergedSettings(candidate) {
@@ -91,9 +91,8 @@ BarWidget {
     injectPanel()
   }
 
-  // Settings stay on the widget's shell.json entry. Preserve fields unknown
-  // to this UI so future versions do not erase them, update the live widget,
-  // persist through the shell, then hand the same value to the singleton.
+  // Settings stay on the widget's shell.json entry. Normalize the supported
+  // schema, persist through the shell, then hand it to the singleton.
   function persistSettings(candidate) {
     var merged = mergedSettings(candidate)
     root.settings = merged

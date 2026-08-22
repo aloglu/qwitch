@@ -130,14 +130,31 @@ ShellRoot {
       "choosing a native shortcut must replace the custom shortcut source")
     subject.capturingShortcut = true
     var modifierEvent = {
-      key: Qt.Key_Shift,
-      modifiers: Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier,
+      key: Qt.Key_Alt,
+      modifiers: Qt.AltModifier,
       accepted: false
     }
     subject.recordShortcut(modifierEvent)
-    check(subject.shortcutError.indexOf("For a modifier-only shortcut") >= 0,
-      "every modifier-only chord must direct the user to the native selector")
-    subject.capturingShortcut = false
+    modifierEvent.key = Qt.Key_Shift
+    modifierEvent.modifiers = Qt.ShiftModifier
+    subject.recordShortcut(modifierEvent)
+    subject.finishModifierShortcut(modifierEvent)
+    check(subject.draft.nativeXkbOption === "grp:alt_shift_toggle"
+      && subject.draft.shortcut === null && !subject.capturingShortcut,
+      "recording any recognized native modifier chord must select its XKB option")
+    subject.capturingShortcut = true
+    modifierEvent.key = Qt.Key_Control
+    modifierEvent.modifiers = Qt.ControlModifier
+    subject.recordShortcut(modifierEvent)
+    modifierEvent.key = Qt.Key_Alt
+    modifierEvent.modifiers = Qt.AltModifier
+    subject.recordShortcut(modifierEvent)
+    modifierEvent.key = Qt.Key_Shift
+    modifierEvent.modifiers = Qt.ShiftModifier
+    subject.recordShortcut(modifierEvent)
+    subject.finishModifierShortcut(modifierEvent)
+    check(subject.shortcutError.indexOf("not available as a native XKB") >= 0,
+      "an unsupported modifier-only chord must receive a general explanation")
   }
 
   Timer {

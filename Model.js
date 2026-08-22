@@ -712,38 +712,60 @@ function nativeXkbShortcutOptions() {
     return [
         { value: "grp:toggle", label: "Right Alt" },
         { value: "grp:lalt_toggle", label: "Left Alt" },
-        { value: "grp:alt_shift_toggle", label: "Alt + Shift" },
+        { value: "grp:alt_shift_toggle", label: "Alt + Shift", capture: ["ALT", "SHIFT"] },
         { value: "grp:lalt_lshift_toggle", label: "Left Alt + Left Shift" },
         { value: "grp:ralt_rshift_toggle", label: "Right Alt + Right Shift" },
         { value: "grp:alt_shift_toggle_bidir", label: "Alt + Shift · directional" },
-        { value: "grp:ctrl_shift_toggle", label: "Ctrl + Shift" },
+        { value: "grp:ctrl_shift_toggle", label: "Ctrl + Shift", capture: ["CTRL", "SHIFT"] },
         { value: "grp:lctrl_lshift_toggle", label: "Left Ctrl + Left Shift" },
         { value: "grp:rctrl_rshift_toggle", label: "Right Ctrl + Right Shift" },
         { value: "grp:ctrl_shift_toggle_bidir", label: "Ctrl + Shift · directional" },
-        { value: "grp:ctrl_alt_toggle", label: "Ctrl + Alt" },
+        { value: "grp:ctrl_alt_toggle", label: "Ctrl + Alt", capture: ["CTRL", "ALT"] },
         { value: "grp:lctrl_lalt_toggle", label: "Left Ctrl + Left Alt" },
         { value: "grp:rctrl_ralt_toggle", label: "Right Ctrl + Right Alt" },
         { value: "grp:ctrl_alt_toggle_bidir", label: "Ctrl + Alt · directional" },
-        { value: "grp:win_space_toggle", label: "Super + Space" },
-        { value: "grp:alt_space_toggle", label: "Alt + Space" },
-        { value: "grp:ctrl_space_toggle", label: "Ctrl + Space" },
-        { value: "grp:caps_toggle", label: "Caps Lock" },
-        { value: "grp:shift_caps_toggle", label: "Shift + Caps Lock" },
-        { value: "grp:alt_caps_toggle", label: "Alt + Caps Lock" },
+        { value: "grp:win_space_toggle", label: "Super + Space", capture: ["SUPER", "SPACE"] },
+        { value: "grp:alt_space_toggle", label: "Alt + Space", capture: ["ALT", "SPACE"] },
+        { value: "grp:ctrl_space_toggle", label: "Ctrl + Space", capture: ["CTRL", "SPACE"] },
+        { value: "grp:caps_toggle", label: "Caps Lock", capture: ["CAPSLOCK"] },
+        { value: "grp:shift_caps_toggle", label: "Shift + Caps Lock", capture: ["SHIFT", "CAPSLOCK"] },
+        { value: "grp:alt_caps_toggle", label: "Alt + Caps Lock", capture: ["ALT", "CAPSLOCK"] },
         { value: "grp:shifts_toggle", label: "Both Shift keys" },
         { value: "grp:alts_toggle", label: "Both Alt keys" },
         { value: "grp:alt_altgr_toggle", label: "Both Alt keys · preserve AltGr" },
         { value: "grp:ctrls_toggle", label: "Both Ctrl keys" },
-        { value: "grp:menu_toggle", label: "Menu" },
+        { value: "grp:menu_toggle", label: "Menu", capture: ["MENU"] },
         { value: "grp:lwin_toggle", label: "Left Super" },
         { value: "grp:rwin_toggle", label: "Right Super" },
         { value: "grp:lshift_toggle", label: "Left Shift" },
         { value: "grp:rshift_toggle", label: "Right Shift" },
         { value: "grp:lctrl_toggle", label: "Left Ctrl" },
         { value: "grp:rctrl_toggle", label: "Right Ctrl" },
-        { value: "grp:sclk_toggle", label: "Scroll Lock" },
+        { value: "grp:sclk_toggle", label: "Scroll Lock", capture: ["SCROLLLOCK"] },
         { value: "grp:lctrl_lwin_toggle", label: "Left Ctrl + Left Super" }
     ];
+}
+
+function nativeXkbOptionForChord(parts) {
+    var order = ["SUPER", "CTRL", "ALT", "SHIFT", "SPACE", "CAPSLOCK", "MENU", "SCROLLLOCK"];
+    var seen = {};
+    var normalized = [];
+    (Array.isArray(parts) ? parts : []).forEach(function(part) {
+        var value = String(part || "").trim().toUpperCase().replace(/[ _-]/g, "");
+        if (order.indexOf(value) === -1 || seen[value]) return;
+        seen[value] = true;
+        normalized.push(value);
+    });
+    normalized.sort(function(left, right) { return order.indexOf(left) - order.indexOf(right); });
+    var signature = normalized.join("+");
+    var options = nativeXkbShortcutOptions();
+    for (var index = 0; index < options.length; index += 1) {
+        var capture = Array.isArray(options[index].capture) ? options[index].capture.slice() : [];
+        capture.sort(function(left, right) { return order.indexOf(left) - order.indexOf(right); });
+        if (capture.length > 0 && capture.join("+") === signature)
+            return options[index].value;
+    }
+    return "";
 }
 
 function withoutGroupToggle(value) {
@@ -1142,6 +1164,7 @@ var exported = {
     parseHyprOptionString: parseHyprOptionString,
     firstGroupToggle: firstGroupToggle,
     nativeXkbShortcutOptions: nativeXkbShortcutOptions,
+    nativeXkbOptionForChord: nativeXkbOptionForChord,
     withoutGroupToggle: withoutGroupToggle,
     withGroupToggle: withGroupToggle,
     nativeXkbShortcutLabel: nativeXkbShortcutLabel,

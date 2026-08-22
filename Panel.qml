@@ -42,6 +42,7 @@ Panel {
   property int editingLayoutIndex: -1
   property string selectedCatalogValue: ""
   property bool capturingShortcut: false
+  property var recordingChord: []
   property string draftError: ""
   property string shortcutError: ""
   property var pendingSecurityDevice: null
@@ -169,6 +170,7 @@ Panel {
     root.editingLayoutIndex = normalized.length > 0 ? 0 : -1
     root.selectedCatalogValue = ""
     root.capturingShortcut = false
+    root.recordingChord = []
     root.pendingSecurityDevice = null
     root.draftError = ""
     root.shortcutError = ""
@@ -456,6 +458,7 @@ Panel {
 
   function chooseNativeShortcut(option) {
     root.capturingShortcut = false
+    root.recordingChord = []
     root.shortcutError = ""
     var next = clone(root.draft, ({}))
     next.shortcut = null
@@ -465,6 +468,7 @@ Panel {
   }
 
   function chooseRecordedShortcut(shortcut) {
+    root.recordingChord = []
     var next = clone(root.draft, ({}))
     next.shortcut = clone(shortcut, null)
     next.nativeXkbOption = ""
@@ -475,6 +479,47 @@ Panel {
   function isModifierKey(key) {
     return key === Qt.Key_Shift || key === Qt.Key_Control || key === Qt.Key_Meta
       || key === Qt.Key_Alt || key === Qt.Key_AltGr || key === Qt.Key_CapsLock
+  }
+
+  function chordParts(event) {
+    var parts = []
+    if (event.modifiers & Qt.MetaModifier) parts.push("SUPER")
+    if (event.modifiers & Qt.ControlModifier) parts.push("CTRL")
+    if (event.modifiers & Qt.AltModifier) parts.push("ALT")
+    if (event.modifiers & Qt.ShiftModifier) parts.push("SHIFT")
+    if (event.key === Qt.Key_Meta && parts.indexOf("SUPER") === -1) parts.push("SUPER")
+    if (event.key === Qt.Key_Control && parts.indexOf("CTRL") === -1) parts.push("CTRL")
+    if ((event.key === Qt.Key_Alt || event.key === Qt.Key_AltGr)
+        && parts.indexOf("ALT") === -1) parts.push("ALT")
+    if (event.key === Qt.Key_Shift && parts.indexOf("SHIFT") === -1) parts.push("SHIFT")
+    if (event.key === Qt.Key_CapsLock) parts.push("CAPSLOCK")
+    if (event.key === Qt.Key_Space) parts.push("SPACE")
+    if (event.key === Qt.Key_Menu) parts.push("MENU")
+    if (event.key === Qt.Key_ScrollLock) parts.push("SCROLLLOCK")
+    return parts
+  }
+
+  function mergedChordParts(parts, event) {
+    var merged = Array.isArray(parts) ? parts.slice() : []
+    var current = chordParts(event)
+    for (var i = 0; i < current.length; i++) {
+      if (merged.indexOf(current[i]) === -1) merged.push(current[i])
+    }
+    return merged
+  }
+
+  function finishModifierShortcut(event) {
+    if (!root.capturingShortcut || !root.isModifierKey(event.key)
+        || root.recordingChord.length === 0) return
+    var nativeOption = Model.nativeXkbOptionForChord(root.recordingChord)
+    if (nativeOption) {
+      root.chooseNativeShortcut(nativeOption)
+    } else {
+      root.capturingShortcut = false
+      root.shortcutError = "That modifier-only combination is not available as a native XKB layout shortcut. Choose a supported native option below, or record a shortcut containing a non-modifier key."
+      root.recordingChord = []
+    }
+    event.accepted = true
   }
 
   function keyName(event) {
@@ -520,21 +565,28 @@ Panel {
     if (!root.capturingShortcut) return
     if (event.key === Qt.Key_Escape && event.modifiers === Qt.NoModifier) {
       root.capturingShortcut = false
+      root.recordingChord = []
       root.shortcutError = ""
       event.accepted = true
       return
     }
     if (isModifierKey(event.key)) {
-      root.shortcutError = "For a custom shortcut, keep holding the modifiers and press a regular key. For a modifier-only shortcut, choose a native XKB option below."
+      root.recordingChord = mergedChordParts(root.recordingChord, event)
+      root.shortcutError = "Release the keys to record this native modifier shortcut."
       event.accepted = true
       return
     }
 
-    var modifiers = []
-    if (event.modifiers & Qt.MetaModifier) modifiers.push("SUPER")
-    if (event.modifiers & Qt.ControlModifier) modifiers.push("CTRL")
-    if (event.modifiers & Qt.AltModifier) modifiers.push("ALT")
-    if (event.modifiers & Qt.ShiftModifier) modifiers.push("SHIFT")
+    var parts = mergedChordParts(root.recordingChord, event)
+    var nativeOption = Model.nativeXkbOptionForChord(parts)
+    if (nativeOption) {
+      chooseNativeShortcut(nativeOption)
+      event.accepted = true
+      return
+    }
+    var modifiers = parts.filter(function(part) {
+      return ["SUPER", "CTRL", "ALT", "SHIFT"].indexOf(part) !== -1
+    })
 
     var shortcut = {
       modifiers: modifiers,
@@ -1224,7 +1276,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: "Choose a native XKB modifier shortcut, or record a custom shortcut containing a regular key."
+            text: "Choose a native XKB shortcut, or record a key combination. Supported modifier-only chords use XKB automatically."
             color: Qt.darker(root.contentForeground, 1.35)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -1263,6 +1315,7 @@ Panel {
               font.pixelSize: Style.font.subtitle
               Keys.priority: Keys.BeforeItem
               Keys.onPressed: function(event) { root.recordShortcut(event) }
+              Keys.onReleased: function(event) { root.finishModifierShortcut(event) }
             }
 
             Button {
@@ -1280,6 +1333,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               onClicked: {
                 root.capturingShortcut = !root.capturingShortcut
+                root.recordingChord = []
                 root.shortcutError = ""
                 if (root.capturingShortcut)
                   Qt.callLater(function() { shortcutField.forceActiveFocus() })

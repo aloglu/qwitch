@@ -182,6 +182,12 @@ test("README documents plugin updates and stale-shell recovery", () => {
   assert.match(readme, /fast-forward/i)
 })
 
+test("README keeps qwitch authoritative over the configured layout list", () => {
+  assert.match(readme, /Leave `kb_layout` unset or commented out/)
+  assert.match(readme, /kb_options = "grp:alt_shift_toggle"/)
+  assert.doesNotMatch(readme, /kb_layout = "us,tr"/)
+})
+
 test("settings reopen at the top and present the native shortcut read-only", () => {
   assert.ok(panel.indexOf("SWITCHING SHORTCUT") < panel.indexOf("󰌌  LAYOUTS"))
   assert.match(panel, /text: "󰌌  SWITCHING SHORTCUT"/)

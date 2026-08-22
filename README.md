@@ -24,18 +24,22 @@ Hyprland. It also reads the effective native `grp:*_toggle` XKB option and shows
 the corresponding shortcut in settings.
 
 qwitch does not edit `~/.config/hypr`, install a Hyprland keybinding, or change
-`kb_options` at runtime. Configure the layouts and native switching shortcut in
-`~/.config/hypr/input.lua`; qwitch only observes the effective value reported
-by Hyprland. For example:
+`kb_options` at runtime. Configure only the native switching shortcut in
+`~/.config/hypr/input.lua`; qwitch supplies its saved layout list to managed
+keyboards while running and only observes the effective shortcut reported by
+Hyprland. For example:
 
 ```lua
-return {
+hl.config({
   input = {
-    kb_layout = "us,tr",
     kb_options = "grp:alt_shift_toggle",
   },
-}
+})
 ```
+
+Leave `kb_layout` unset or commented out so qwitch remains the source of truth
+for the active layout list. Because `kb_options` is one comma-separated list,
+keep any unrelated XKB options you already use alongside the `grp:*` option.
 
 After editing the file, reload Hyprland normally. The settings panel will show
 the detected shortcut, or `Not configured` when no supported native group

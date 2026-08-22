@@ -183,6 +183,7 @@ test("README documents plugin updates and stale-shell recovery", () => {
 })
 
 test("settings reopen at the top and present the native shortcut read-only", () => {
+  assert.ok(panel.indexOf("SWITCHING SHORTCUT") < panel.indexOf("󰌌  LAYOUTS"))
   assert.match(panel, /text: "󰌌  SWITCHING SHORTCUT"/)
   assert.match(panel, /root\.service\.nativeShortcutLabel/)
   assert.match(panel, /root\.service\.nativeShortcutLabel/)

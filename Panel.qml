@@ -645,6 +645,34 @@ Panel {
 
           PanelSeparator { foreground: root.contentForeground }
           PanelSectionHeader {
+            text: "󰌌  SWITCHING SHORTCUT"
+            foreground: root.contentAccent
+            fontFamily: root.contentFontFamily
+            fontSize: Style.font.body
+          }
+
+          Text {
+            width: parent.width
+            text: root.service && String(root.service.nativeShortcutLabel || "") !== ""
+              ? String(root.service.nativeShortcutLabel) : "Not configured"
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.subtitle
+            font.bold: true
+          }
+
+          Text {
+            width: parent.width
+            text: root.service && String(root.service.nativeShortcutLabel || "") !== ""
+              ? "Configured in ~/.config/hypr/input.lua"
+              : "Configure it in ~/.config/hypr/input.lua"
+            color: Qt.darker(root.contentForeground, 1.35)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          PanelSeparator { foreground: root.contentForeground }
+          PanelSectionHeader {
             text: "󰌌  LAYOUTS"
             foreground: root.contentAccent
             fontFamily: root.contentFontFamily
@@ -1050,34 +1078,6 @@ Panel {
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
-          }
-
-          PanelSeparator { foreground: root.contentForeground }
-          PanelSectionHeader {
-            text: "󰌌  SWITCHING SHORTCUT"
-            foreground: root.contentAccent
-            fontFamily: root.contentFontFamily
-            fontSize: Style.font.body
-          }
-
-          Text {
-            width: parent.width
-            text: root.service && String(root.service.nativeShortcutLabel || "") !== ""
-              ? String(root.service.nativeShortcutLabel) : "Not configured"
-            color: root.contentForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.subtitle
-            font.bold: true
-          }
-
-          Text {
-            width: parent.width
-            text: root.service && String(root.service.nativeShortcutLabel || "") !== ""
-              ? "Configured in ~/.config/hypr/input.lua"
-              : "Configure it in ~/.config/hypr/input.lua"
-            color: Qt.darker(root.contentForeground, 1.35)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
           }
 
           PanelSeparator { foreground: root.contentForeground }

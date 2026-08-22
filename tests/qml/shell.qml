@@ -124,7 +124,7 @@ ShellRoot {
       "the adopted native shortcut must be the authoritative layout shortcut")
     check(subject.nativeShortcutSummary() === "Alt + Shift",
       "the detected Hyprland shortcut must remain visible")
-    subject._nativeShortcutSelector.changed("grp:ctrl_alt_toggle")
+    subject.chooseNativeShortcut("grp:ctrl_alt_toggle")
     check(subject.draft.nativeXkbOption === "grp:ctrl_alt_toggle"
       && subject.draft.shortcut === null,
       "choosing a native shortcut must replace the custom shortcut source")

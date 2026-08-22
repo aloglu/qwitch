@@ -194,8 +194,8 @@ test("README documents plugin updates and stale-shell recovery", () => {
 test("settings reopen at the top and present one authoritative shortcut", () => {
   assert.match(panel, /function displayedShortcut\(\)/)
   assert.match(panel, /text: "Layout shortcut"/)
-  assert.match(panel, /id: nativeShortcutDropdown/)
-  assert.match(panel, /root\.chooseNativeShortcut\(value\)/)
+  assert.doesNotMatch(panel, /nativeShortcutDropdown/)
+  assert.doesNotMatch(panel, /property alias _nativeShortcutSelector/)
   assert.match(panel, /chooseRecordedShortcut\(shortcut\)/)
   assert.match(panel, /Model\.nativeXkbOptionForChord\(root\.recordingChord\)/)
   assert.match(panel, /That modifier-only combination is not available as a native XKB/)

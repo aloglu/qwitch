@@ -57,15 +57,6 @@ Panel {
   property alias _flagEditor: flagField
   property alias _displayModeSelector: displayModeGroup
   property alias _layoutScopeSelector: layoutScopeGroup
-  property alias _nativeShortcutSelector: nativeShortcutDropdown
-  readonly property var nativeShortcutOptions: [{
-    value: "",
-    label: root.draft.shortcut
-      ? "Custom shortcut selected"
-      : root.service && String(root.service.detectedNativeXkbOption || "")
-      ? "Use input.lua · " + String(root.service.nativeShortcutLabel || "Detected shortcut")
-      : "No native modifier shortcut"
-  }].concat(Model.nativeXkbShortcutOptions())
   property var draft: ({
     layouts: [],
     displayMode: "both",
@@ -516,7 +507,7 @@ Panel {
       root.chooseNativeShortcut(nativeOption)
     } else {
       root.capturingShortcut = false
-      root.shortcutError = "That modifier-only combination is not available as a native XKB layout shortcut. Choose a supported native option below, or record a shortcut containing a non-modifier key."
+      root.shortcutError = "That modifier-only combination is not available as a native XKB layout shortcut. Record a supported modifier combination or include a non-modifier key."
       root.recordingChord = []
     }
     event.accepted = true
@@ -1276,23 +1267,11 @@ Panel {
 
           Text {
             width: parent.width
-            text: "Choose a native XKB shortcut, or record a key combination. Supported modifier-only chords use XKB automatically."
+            text: "Record a key combination. Supported modifier-only chords use native XKB automatically."
             color: Qt.darker(root.contentForeground, 1.35)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
-          }
-
-          Dropdown {
-            id: nativeShortcutDropdown
-            width: parent.width
-            showLabel: false
-            options: root.nativeShortcutOptions
-            value: root.draft.shortcut ? "" : String(root.draft.nativeXkbOption || "")
-            foreground: root.contentForeground
-            accent: root.contentAccent
-            fontFamily: root.contentFontFamily
-            onChanged: function(value) { root.chooseNativeShortcut(value) }
           }
 
           Item {

@@ -768,6 +768,43 @@ function nativeXkbOptionForChord(parts) {
     return "";
 }
 
+function conflictingXkbOptionPrefixes(parts) {
+    var prefixes = [];
+    var byKey = {
+        SUPER: ["altwin:alt_win", "altwin:ctrl_win", "altwin:ctrl_rwin", "altwin:ctrl_alt_win", "altwin:meta_win", "altwin:left_meta_win", "altwin:hyper_win", "altwin:alt_super_win", "altwin:swap_lalt_lwin", "altwin:swap_ralt_rwin", "altwin:swap_alt_win", "altwin:prtsc_rwin", "compose:lwin", "compose:rwin", "lv3:win", "lv3:lwin", "lv3:rwin", "lv5:lwin", "lv5:rwin"],
+        CTRL: ["ctrl:lctrl_meta", "ctrl:swapcaps", "ctrl:grouptoggle_capscontrol", "ctrl:hyper_capscontrol", "ctrl:ac_ctrl", "ctrl:aa_ctrl", "ctrl:rctrl_ralt", "ctrl:ralt_rctrl", "ctrl:swap_lalt_lctl", "ctrl:swap_ralt_rctl", "ctrl:swap_lwin_lctl", "ctrl:swap_rwin_rctl", "ctrl:swap_lalt_lctl_lwin", "compose:lctrl", "compose:rctrl", "lv3:switch", "lv5:rctrl"],
+        ALT: ["altwin:meta_alt", "altwin:alt_win", "altwin:ctrl_alt_win", "altwin:alt_super_win", "altwin:swap_lalt_lwin", "altwin:swap_ralt_rwin", "altwin:swap_alt_win", "compose:ralt", "lv3:alt", "lv3:lalt", "lv3:ralt", "lv5:ralt"],
+        SHIFT: ["shift:"],
+        SPACE: ["nbsp:"],
+        CAPSLOCK: ["caps:", "compose:caps", "lv3:caps", "lv5:caps"],
+        MENU: ["altwin:menu", "compose:menu", "lv3:menu", "lv5:menu"],
+        SCROLLLOCK: ["compose:sclk"]
+    };
+    (Array.isArray(parts) ? parts : []).forEach(function(part) {
+        var values = byKey[String(part || "").toUpperCase()] || [];
+        values.forEach(function(prefix) {
+            if (prefixes.indexOf(prefix) === -1) prefixes.push(prefix);
+        });
+    });
+    return prefixes;
+}
+
+function withoutConflictingXkbOptions(value, option) {
+    var selected = sanitizeNativeXkbOption(option);
+    var entry = nativeXkbShortcutOptions().find(function(candidate) {
+        return candidate.value === selected;
+    });
+    var prefixes = conflictingXkbOptionPrefixes(entry && entry.capture);
+    return withoutGroupToggle(value).split(",").map(trimmed).filter(function(candidate) {
+        return candidate && !prefixes.some(function(prefix) {
+            return prefix.charAt(prefix.length - 1) === ":"
+                ? candidate.indexOf(prefix) === 0
+                : candidate === prefix || candidate.indexOf(prefix + "-") === 0
+                  || candidate.indexOf(prefix + "_") === 0
+        });
+    }).join(",");
+}
+
 function withoutGroupToggle(value) {
     return String(value || "").split(",").map(trimmed).filter(function(option) {
         return option && !/^grp:[a-z0-9_]+$/i.test(option);
@@ -775,8 +812,8 @@ function withoutGroupToggle(value) {
 }
 
 function withGroupToggle(value, option) {
-    var base = withoutGroupToggle(value);
     var group = sanitizeNativeXkbOption(option);
+    var base = withoutConflictingXkbOptions(value, group);
     return [base, group].filter(function(part) { return part !== ""; }).join(",");
 }
 
@@ -1165,6 +1202,7 @@ var exported = {
     firstGroupToggle: firstGroupToggle,
     nativeXkbShortcutOptions: nativeXkbShortcutOptions,
     nativeXkbOptionForChord: nativeXkbOptionForChord,
+    withoutConflictingXkbOptions: withoutConflictingXkbOptions,
     withoutGroupToggle: withoutGroupToggle,
     withGroupToggle: withGroupToggle,
     nativeXkbShortcutLabel: nativeXkbShortcutLabel,

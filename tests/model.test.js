@@ -286,6 +286,14 @@ test('reads native Hyprland XKB options and labels common group toggles', () => 
   assert.equal(Model.nativeXkbOptionForChord(['ALT', 'CTRL']), 'grp:ctrl_alt_toggle');
   assert.equal(Model.nativeXkbOptionForChord(['SUPER', 'SPACE']), 'grp:win_space_toggle');
   assert.equal(Model.nativeXkbOptionForChord(['CTRL', 'ALT', 'SHIFT']), '');
+  assert.equal(Model.withGroupToggle(
+    'compose:caps,ctrl:nocaps,shift:both_capslock_cancel,grp:alt_shift_toggle',
+    'grp:ctrl_shift_toggle'
+  ), 'compose:caps,ctrl:nocaps,grp:ctrl_shift_toggle');
+  assert.equal(Model.withGroupToggle(
+    'compose:caps,nbsp:level2,grp:ctrl_shift_toggle',
+    'grp:win_space_toggle'
+  ), 'compose:caps,grp:win_space_toggle');
   assert.equal(Model.sanitizeSettings({
     shortcut: { modifiers: ['SUPER'], key: 'K', code: 37 },
     nativeXkbOption: 'grp:alt_shift_toggle',
